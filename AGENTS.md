@@ -109,10 +109,17 @@ All tools are defined in `app/api/chat/route.ts`. Names use **snake_case**.
 
 ### `search_recipes`
 
-- **Input (all optional):** `query`, `dietaryFilters`, `mealType`, `maxPrepTime`, `nutrition`, `budget`, `preferredIngredients`, `excludeIngredients`, `maxResults` (3–5)
+- **Input (all optional):** `query`, `dietaryFilters`, `mealType`, `maxPrepTime`, `nutrition`, `budget`, `availableIngredients`, `excludeIngredients`, `maxResults` (3–5)
 - **Output:** `{ count, recipes }` — `recipes` is an array of `Recipe` objects from `lib/recipes.ts`
-- **Implementation:** `lib/recipes.ts` → `searchRecipes()`
+- **Implementation:** `lib/recipes.ts` → `searchRecipes()` — ranks by ingredient overlap when `availableIngredients` is set
 - **Logs:** `[tool] search_recipes called with:`, returned titles
+
+### `generate_shopping_list`
+
+- **Input:** `recipeId`, `availableIngredients`
+- **Output:** `{ recipeId, recipeTitle, availableIngredients, missing, missingCount, overlapCount }` or `{ error }`
+- **Implementation:** `lib/shoppingList.ts` → `generateShoppingList()` (scales missing lines via `lib/scaleIngredients.ts` and household size from preferences)
+- **Logs:** `[tool] generate_shopping_list called with:`, missing count or error
 
 When adding a new tool:
 
@@ -133,7 +140,8 @@ app/
 data/
   preferences.json        # Local user prefs (gitignored values in .env.local only)
 lib/
-  recipes.ts              # Mock recipe DB + searchRecipes()
+  recipes.ts              # Mock recipe DB + searchRecipes() (includes steps)
+  shoppingList.ts         # Missing-ingredient shopping lists
   preferences.ts          # Read/write preferences.json
   scaleIngredients.ts     # Metric amount scaling for household size
   i18n.ts                 # EN/DE UI strings and label maps
@@ -181,7 +189,9 @@ The results view depends on this contract — preserve it when changing either s
 1. UI sends a structured natural-language request (built from `RecipeRequestForm` values) plus `language` in the chat body.
 2. Agent calls `get_preferences`, then `search_recipes`, then streams a **short intro paragraph** (no per-recipe lists).
 3. UI reads `tool-search_recipes` parts with `state === "output-available"` and renders `output.recipes` via `RecipeCard`.
-4. `RecipeCard` applies household-size scaling client-side from `prefs.householdSize`; the tool returns base recipe data.
+4. UI reads `tool-generate_shopping_list` parts and renders via `ShoppingListCard`. Recipe cards expose a shopping-list button that sends a follow-up chat message.
+5. Clicking a recipe card navigates to `/recipes/[id]` for full ingredients and step-by-step instructions (`RecipeDetail`).
+6. `RecipeCard` applies household-size scaling client-side from `prefs.householdSize`; the tool returns base recipe data.
 
 A new frontend only needs to implement the same HTTP calls and parse the same tool output shape.
 

@@ -26,7 +26,7 @@ export type BudgetTier = (typeof BUDGET_OPTIONS)[number];
 export interface RecipeRequestValues {
   mealType: MealType;
   maxPrepTime: number; // 0 = any
-  preferredIngredients: string[];
+  availableIngredients: string[];
   nutrition: string[];
   budget: BudgetTier;
 }
@@ -67,7 +67,7 @@ export function RecipeRequestForm({
     onSubmit({
       mealType,
       maxPrepTime,
-      preferredIngredients: ingredients
+      availableIngredients: ingredients
         .split(",")
         .map((i) => i.trim())
         .filter(Boolean),
