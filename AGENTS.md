@@ -6,6 +6,8 @@ Guidance for AI coding agents working on this repository.
 
 A **meal planner** that recommends recipes via a guided UI and an LLM agent with tools. Users complete onboarding (diet, dislikes, household size), submit a structured recipe request, and receive streamed recommendations rendered as localized recipe cards.
 
+Recipe data comes from **Spoonacular** (English). German UI labels and recipe text are produced server-side via OpenAI.
+
 ## Stack
 
 | Layer | Technology |
@@ -15,6 +17,8 @@ A **meal planner** that recommends recipes via a guided UI and an LLM agent with
 | UI | **React 19**, CSS in `app/globals.css` |
 | Agent | **Vercel AI SDK v5** (`ai`, `@ai-sdk/openai`, `@ai-sdk/react`) |
 | Model | OpenAI `gpt-4o-mini` via `OPENAI_API_KEY` in `.env.local` |
+| Recipes | **Spoonacular** via `SPOONACULAR_API_KEY` in `.env.local` |
+| Localization | OpenAI in `lib/translateRecipe.ts` (EN→DE recipe content) |
 | Validation | **Zod** v4 (`inputSchema` on tools) |
 | Data (local) | JSON file at `data/preferences.json` |
 
@@ -39,6 +43,7 @@ npx tsc --noEmit
 └────────────────────┬────────────────────────────────────┘
                      │ POST /api/chat  (agent)
                      │ GET/POST /api/preferences  (CRUD)
+                     │ GET /api/recipes/[id]  (recipe detail)
                      ▼
 ┌─────────────────────────────────────────────────────────┐
 │  Agent route (thin orchestration)                       │
@@ -50,7 +55,8 @@ npx tsc --noEmit
                      ▼
 ┌─────────────────────────────────────────────────────────┐
 │  Domain / agent logic (stable, UI-agnostic)             │
-│  lib/recipes.ts, lib/preferences.ts, lib/scaleIngredients.ts │
+│  lib/recipes.ts, lib/spoonacular.ts, lib/translateRecipe.ts, │
+│  lib/foodTermsEn.ts, lib/shoppingList.ts, lib/preferences.ts │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -62,6 +68,17 @@ npx tsc --noEmit
 4. **Preferences CRUD** for the onboarding flow uses `/api/preferences` directly; the agent uses `get_preferences` / `set_preferences` tools that read/write the same `lib/preferences.ts` layer.
 5. When adding features, ask: *“Would a different frontend still work if only the API contract changed?”* If not, move logic down into `lib/` or the API route.
 
+## Recipe search pipeline
+
+`searchRecipes()` in `lib/recipes.ts` orchestrates:
+
+1. **`lib/foodTermsEn.ts`** — translate German ingredient/search terms to English (dictionary + OpenAI fallback) before calling Spoonacular.
+2. **`lib/spoonacular.ts`** — `complexSearch` with diet/intolerance/time/budget filters; single-ingredient searches use `query` (not strict `includeIngredients`); retries with a softer query on empty results.
+3. **`lib/translateRecipe.ts`** — batch-translate recipe title, description, ingredients, and steps to German via OpenAI; cached by recipe id.
+4. **Local ranking** in `lib/recipes.ts` — overlap with `availableIngredients`, soft filters for meal type / time / nutrition / budget. **Do not hard-filter on inferred diet tags** — Spoonacular already applies diet; many API recipes omit `vegetarian`/`vegan` flags and would be dropped incorrectly.
+
+Logs: `[spoonacular]`, `[search]`, `[translate]`, `[foodTerms]`.
+
 ## Agent API
 
 | Endpoint | File | Purpose |
@@ -69,6 +86,7 @@ npx tsc --noEmit
 | `POST /api/chat` | `app/api/chat/route.ts` | Streaming agent (tools + model reply) |
 | `GET /api/preferences` | `app/api/preferences/route.ts` | Read saved preferences (UI onboarding) |
 | `POST /api/preferences` | `app/api/preferences/route.ts` | Write preferences (UI onboarding) |
+| `GET /api/recipes/[id]` | `app/api/recipes/[id]/route.ts` | Fetch one recipe by Spoonacular id (for detail page) |
 
 ### `POST /api/chat`
 
@@ -110,9 +128,11 @@ All tools are defined in `app/api/chat/route.ts`. Names use **snake_case**.
 ### `search_recipes`
 
 - **Input (all optional):** `query`, `dietaryFilters`, `mealType`, `maxPrepTime`, `nutrition`, `budget`, `availableIngredients`, `excludeIngredients`, `maxResults` (3–5)
-- **Output:** `{ count, recipes }` — `recipes` is an array of `Recipe` objects from `lib/recipes.ts`
-- **Implementation:** `lib/recipes.ts` → `searchRecipes()` — ranks by ingredient overlap when `availableIngredients` is set
-- **Logs:** `[tool] search_recipes called with:`, returned titles
+- **Output:** `{ count, recipes }` or `{ count: 0, recipes: [], error }` — `recipes` is an array of `Recipe` objects from `lib/recipes.ts`
+- **Implementation:** `lib/recipes.ts` → `searchRecipes()` (see pipeline above)
+- **Logs:** `[tool] search_recipes called with:`, returned titles or error
+
+German ingredient names in `availableIngredients` or `query` are supported; translation to English for Spoonacular is automatic.
 
 ### `generate_shopping_list`
 
@@ -132,19 +152,25 @@ When adding a new tool:
 
 ```
 app/
-  api/chat/route.ts       # Agent entry point
+  api/chat/route.ts         # Agent entry point
   api/preferences/route.ts
-  components/             # UI only — no agent or domain logic
-  page.tsx                # Flow orchestrator (onboarding → request → results)
+  api/recipes/[id]/route.ts # Single-recipe JSON for detail page
+  components/               # UI only — no agent or domain logic
+  recipes/[id]/page.tsx     # Recipe detail route
+  page.tsx                  # Flow orchestrator (onboarding → request → results)
   globals.css
 data/
-  preferences.json        # Local user prefs (gitignored values in .env.local only)
+  preferences.json          # Local user prefs (runtime values; template committed)
 lib/
-  recipes.ts              # Mock recipe DB + searchRecipes() (includes steps)
-  shoppingList.ts         # Missing-ingredient shopping lists
-  preferences.ts          # Read/write preferences.json
-  scaleIngredients.ts     # Metric amount scaling for household size
-  i18n.ts                 # EN/DE UI strings and label maps
+  recipes.ts                # Recipe types + searchRecipes() ranking
+  spoonacular.ts            # Spoonacular API client + EN response mapping
+  translateRecipe.ts        # OpenAI EN→DE recipe localization
+  foodTermsEn.ts            # German→English food terms for Spoonacular
+  clientSession.ts          # sessionStorage helpers (results restore, recipe cache)
+  shoppingList.ts           # Missing-ingredient shopping lists
+  preferences.ts            # Read/write preferences.json
+  scaleIngredients.ts       # Metric amount scaling for household size
+  i18n.ts                   # EN/DE UI strings and label maps
 ```
 
 ## Coding conventions
@@ -167,13 +193,14 @@ lib/
 - Client components use `"use client"` only when they need hooks or browser APIs.
 - Forms live in `app/components/`; `app/page.tsx` owns phase state (`onboarding` | `request` | `results`).
 - Styles: plain CSS classes in `globals.css` (BEM-ish: `block__element`, modifiers with `--`).
-- **i18n:** UI strings in `lib/i18n.ts` (`getT(lang)`). Supported langs: `en`, `de`. Recipe content is localized in `lib/recipes.ts` (`Localized` `{ en, de }`).
+- **i18n:** UI strings in `lib/i18n.ts` (`getT(lang)`). Supported langs: `en`, `de`. Recipe content uses `Localized { en, de }` — `en` from Spoonacular, `de` from `lib/translateRecipe.ts`.
 - **Measures:** European/metric only (`g`, `ml`, `°C`, `TL`/`EL` in German). Scale display amounts via `lib/scaleIngredients.ts` using `householdSize / recipe.servings`.
 
 ### Data & secrets
 
 - Never commit `.env.local`. Use `.env.local.example` as the template.
-- `OPENAI_API_KEY` is read automatically by `@ai-sdk/openai` on the server only.
+- `OPENAI_API_KEY` is read by `@ai-sdk/openai` and `lib/translateRecipe.ts` / `lib/foodTermsEn.ts` on the server only.
+- `SPOONACULAR_API_KEY` is read only in `lib/spoonacular.ts` on the server — never expose it to the client.
 - `data/preferences.json` is committed with empty defaults; user-specific values are written at runtime.
 
 ### Scope
@@ -188,10 +215,11 @@ The results view depends on this contract — preserve it when changing either s
 
 1. UI sends a structured natural-language request (built from `RecipeRequestForm` values) plus `language` in the chat body.
 2. Agent calls `get_preferences`, then `search_recipes`, then streams a **short intro paragraph** (no per-recipe lists).
-3. UI reads `tool-search_recipes` parts with `state === "output-available"` and renders `output.recipes` via `RecipeCard`.
+3. UI reads `tool-search_recipes` parts with `state === "output-available"` and renders `output.recipes` via `RecipeCard`. Tool errors in `output.error` are shown inline.
 4. UI reads `tool-generate_shopping_list` parts and renders via `ShoppingListCard`. Recipe cards expose a shopping-list button that sends a follow-up chat message.
-5. Clicking a recipe card navigates to `/recipes/[id]` for full ingredients and step-by-step instructions (`RecipeDetail`).
-6. `RecipeCard` applies household-size scaling client-side from `prefs.householdSize`; the tool returns base recipe data.
+5. Clicking a recipe card navigates to `/recipes/[id]` (Spoonacular numeric id). `RecipeDetail` loads from session cache + `GET /api/recipes/[id]`.
+6. Results phase state (messages, available ingredients) is persisted in **sessionStorage** via `lib/clientSession.ts` so **Back to results** restores the results view after visiting a detail page.
+7. `RecipeCard` applies household-size scaling client-side from `prefs.householdSize`; the tool returns base recipe data.
 
 A new frontend only needs to implement the same HTTP calls and parse the same tool output shape.
 
@@ -202,6 +230,19 @@ Copy and fill in:
 ```bash
 cp .env.local.example .env.local
 # OPENAI_API_KEY=sk-...
+# SPOONACULAR_API_KEY=...
 ```
 
-Restart the dev server after changing env vars.
+Restart the dev server after changing env vars. Run only **one** `npm run dev` instance; use the localhost URL printed in the terminal.
+
+### Spoonacular setup
+
+1. Create a free account at [spoonacular.com/food-api/console](https://spoonacular.com/food-api/console).
+2. Copy the API key from the dashboard.
+3. Add `SPOONACULAR_API_KEY=...` to `.env.local` (never commit this file).
+4. Free tier: ~150 API points/day — each search uses several points depending on result count.
+
+### Dev troubleshooting
+
+- If pages hang or 500, stop all dev servers, run `rm -rf .next`, then `npm run dev` once.
+- If port 3000 is busy, Next.js picks another port — always open the URL from the terminal output.

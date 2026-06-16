@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { Lang, Recipe } from "@/lib/recipes";
 import {
@@ -8,21 +8,56 @@ import {
   NUTRITION_LABELS,
   getT,
 } from "@/lib/i18n";
+import { getCachedRecipeFromSession } from "@/lib/clientSession";
 import { scaleIngredientLine, servingScale } from "@/lib/scaleIngredients";
 
-export function RecipeDetail({ recipe }: { recipe: Recipe }) {
-  const router = useRouter();
+type LoadState = "loading" | "ready" | "error";
+
+export function RecipeDetail({ recipeId }: { recipeId: string }) {
   const [lang, setLang] = useState<Lang>("en");
   const [householdSize, setHouseholdSize] = useState<number | null>(null);
+  const [recipe, setRecipe] = useState<Recipe | null>(null);
+  const [loadState, setLoadState] = useState<LoadState>("loading");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const t = getT(lang);
-  const factor = servingScale(recipe.servings, householdSize);
-  const effectiveServings = householdSize ?? recipe.servings;
 
   useEffect(() => {
     const stored = localStorage.getItem("lang");
     if (stored === "en" || stored === "de") setLang(stored);
   }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    const cached = getCachedRecipeFromSession(recipeId);
+    if (cached) {
+      setRecipe(cached);
+      setLoadState("ready");
+    }
+
+    fetch(`/api/recipes/${recipeId}`)
+      .then(async (r) => {
+        const data = (await r.json()) as { recipe?: Recipe; error?: string };
+        if (!r.ok) throw new Error(data.error ?? "Recipe not found");
+        return data.recipe;
+      })
+      .then((loaded) => {
+        if (!active || !loaded) return;
+        setRecipe(loaded);
+        setLoadState("ready");
+      })
+      .catch((error: Error) => {
+        if (!active) return;
+        if (cached) return;
+        setErrorMessage(error.message || "Recipe not found");
+        setLoadState("error");
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [recipeId]);
 
   useEffect(() => {
     let active = true;
@@ -41,6 +76,30 @@ export function RecipeDetail({ recipe }: { recipe: Recipe }) {
     setLang(next);
     localStorage.setItem("lang", next);
   }
+
+  if (loadState === "loading" && !recipe) {
+    return (
+      <main className="app">
+        <div className="card muted">{t("loading")}</div>
+      </main>
+    );
+  }
+
+  if (loadState === "error" || !recipe) {
+    return (
+      <main className="app">
+        <div className="card muted">
+          <p>{errorMessage ?? t("recipeNotFound")}</p>
+          <Link className="link" href="/">
+            {t("back")}
+          </Link>
+        </div>
+      </main>
+    );
+  }
+
+  const factor = servingScale(recipe.servings, householdSize);
+  const effectiveServings = householdSize ?? recipe.servings;
 
   return (
     <main className="app">
@@ -67,13 +126,9 @@ export function RecipeDetail({ recipe }: { recipe: Recipe }) {
       </header>
 
       <article className="recipe-detail">
-        <button
-          type="button"
-          className="link recipe-detail__back"
-          onClick={() => router.back()}
-        >
-          {t("back")}
-        </button>
+        <Link href="/" className="link recipe-detail__back">
+          {t("backToResults")}
+        </Link>
 
         <div className="recipe-detail__head">
           <h2 className="recipe-detail__title">{recipe.title[lang]}</h2>

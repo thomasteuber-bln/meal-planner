@@ -16,6 +16,13 @@ import {
 import { RecipeCard } from "./components/RecipeCard";
 import { ShoppingListCard } from "./components/ShoppingListCard";
 import type { ShoppingListResult } from "@/lib/shoppingList";
+import {
+  cacheRecipeForDetail,
+  clearResultsSession,
+  persistResultsSession,
+  restoreResultsSession,
+} from "@/lib/clientSession";
+import type { UIMessage } from "ai";
 
 type Phase = "loading" | "onboarding" | "request" | "results";
 
@@ -45,6 +52,11 @@ function buildRequestMessage(v: RecipeRequestValues): string {
 function recipesFromPart(part: { output?: unknown }): Recipe[] {
   const output = part.output as { recipes?: Recipe[] } | undefined;
   return output?.recipes ?? [];
+}
+
+function searchErrorFromPart(part: { output?: unknown }): string | null {
+  const output = part.output as { error?: string } | undefined;
+  return output?.error ?? null;
 }
 
 function shoppingListFromPart(part: { output?: unknown }): ShoppingListResult | null {
@@ -78,18 +90,51 @@ export default function Page() {
 
   useEffect(() => {
     let active = true;
-    fetch("/api/preferences")
-      .then((r) => r.json())
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => {
+      if (active) setPhase("onboarding");
+    }, 10_000);
+
+    fetch("/api/preferences", { signal: controller.signal })
+      .then((r) => {
+        if (!r.ok) throw new Error(`preferences ${r.status}`);
+        return r.json();
+      })
       .then((data: { preferences: Preferences }) => {
         if (!active) return;
+        window.clearTimeout(timeout);
         setPrefs(data.preferences);
+
+        const restored = restoreResultsSession();
+        if (restored?.messages?.length) {
+          setMessages(restored.messages as UIMessage[]);
+          setAvailableIngredients(restored.availableIngredients ?? []);
+          if (restored.lang === "en" || restored.lang === "de") {
+            setLang(restored.lang);
+          }
+          setPhase("results");
+          return;
+        }
+
         setPhase(data.preferences?.onboarded ? "request" : "onboarding");
       })
-      .catch(() => active && setPhase("onboarding"));
+      .catch(() => {
+        if (!active) return;
+        window.clearTimeout(timeout);
+        setPhase("onboarding");
+      });
+
     return () => {
       active = false;
+      window.clearTimeout(timeout);
+      controller.abort();
     };
   }, []);
+
+  useEffect(() => {
+    if (phase !== "results" || messages.length === 0) return;
+    persistResultsSession({ messages, availableIngredients, lang });
+  }, [phase, messages, availableIngredients, lang]);
 
   function changeLang(next: Lang) {
     setLang(next);
@@ -113,6 +158,7 @@ export default function Page() {
   }
 
   function submitRequest(values: RecipeRequestValues) {
+    clearResultsSession();
     setMessages([]);
     setAvailableIngredients(values.availableIngredients);
     setPhase("results");
@@ -127,6 +173,11 @@ export default function Page() {
       { text: `Generate a shopping list for recipe ${recipeId}. ${avail}` },
       { body: { language: lang } },
     );
+  }
+
+  function openRecipeDetail(recipe: Recipe) {
+    cacheRecipeForDetail(recipe);
+    persistResultsSession({ messages, availableIngredients, lang });
   }
 
   function sendFollowUp(e: React.FormEvent) {
@@ -206,7 +257,10 @@ export default function Page() {
             <button
               className="btn"
               type="button"
-              onClick={() => setPhase("request")}
+              onClick={() => {
+                clearResultsSession();
+                setPhase("request");
+              }}
               disabled={busy}
             >
               {t("newRecommendation")}
@@ -218,6 +272,15 @@ export default function Page() {
               .filter((p) => p.type === "text")
               .map((p) => ("text" in p ? p.text : ""))
               .join("");
+            const searchErrors = message.parts
+              .filter(
+                (p) =>
+                  p.type === "tool-search_recipes" &&
+                  "state" in p &&
+                  p.state === "output-available",
+              )
+              .map((p) => searchErrorFromPart(p as { output?: unknown }))
+              .filter((err): err is string => Boolean(err));
             const recipes = message.parts
               .filter(
                 (p) =>
@@ -251,6 +314,11 @@ export default function Page() {
                         <div className="bubble__text">{text}</div>
                       </div>
                     )}
+                    {searchErrors.map((err) => (
+                      <div key={err} className="bubble bubble--assistant bubble--error">
+                        {err}
+                      </div>
+                    ))}
                     {recipes.length > 0 && (
                       <div className="recipe-grid">
                         {recipes.map((r) => (
@@ -261,6 +329,7 @@ export default function Page() {
                             householdSize={prefs?.householdSize}
                             onShoppingList={requestShoppingList}
                             shoppingListBusy={busy}
+                            onOpenDetail={openRecipeDetail}
                           />
                         ))}
                       </div>

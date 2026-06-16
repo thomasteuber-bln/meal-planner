@@ -13,12 +13,14 @@ export function RecipeCard({
   householdSize,
   onShoppingList,
   shoppingListBusy,
+  onOpenDetail,
 }: {
   recipe: Recipe;
   lang: Lang;
   householdSize?: number | null;
   onShoppingList?: (recipeId: string) => void;
   shoppingListBusy?: boolean;
+  onOpenDetail?: (recipe: Recipe) => void;
 }) {
   const t = getT(lang);
   const factor = servingScale(recipe.servings, householdSize);
@@ -26,7 +28,11 @@ export function RecipeCard({
 
   return (
     <article className="recipe">
-      <Link href={`/recipes/${recipe.id}`} className="recipe__link">
+      <Link
+        href={`/recipes/${recipe.id}`}
+        className="recipe__link"
+        onClick={() => onOpenDetail?.(recipe)}
+      >
         <div className="recipe__head">
           <h3 className="recipe__title">{recipe.title[lang]}</h3>
           <span className="recipe__time">
