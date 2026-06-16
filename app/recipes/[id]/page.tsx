@@ -1,6 +1,6 @@
-import { notFound } from "next/navigation";
-import { getRecipeById } from "@/lib/recipes";
 import { RecipeDetail } from "@/app/components/RecipeDetail";
+
+export const dynamic = "force-dynamic";
 
 export default async function RecipePage({
   params,
@@ -8,7 +8,5 @@ export default async function RecipePage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const recipe = getRecipeById(id);
-  if (!recipe) notFound();
-  return <RecipeDetail recipe={recipe} />;
+  return <RecipeDetail recipeId={id} />;
 }

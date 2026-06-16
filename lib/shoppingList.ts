@@ -29,12 +29,12 @@ function missingIngredientLines(
   );
 }
 
-export function generateShoppingList(args: {
+export async function generateShoppingList(args: {
   recipeId: string;
   availableIngredients: string[];
   householdSize?: number | null;
-}): ShoppingListResult | { error: string } {
-  const recipe = getRecipeById(args.recipeId);
+}): Promise<ShoppingListResult | { error: string }> {
+  const recipe = await getRecipeById(args.recipeId);
   if (!recipe) {
     return { error: `Recipe not found: ${args.recipeId}` };
   }

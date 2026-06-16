@@ -16,6 +16,10 @@ import {
 } from "@/lib/recipes";
 import { readPreferences, writePreferences } from "@/lib/preferences";
 import { generateShoppingList } from "@/lib/shoppingList";
+import {
+  RecipeApiConfigError,
+  RecipeApiError,
+} from "@/lib/spoonacular";
 
 // Allow streaming responses up to 30 seconds
 export const maxDuration = 30;
@@ -61,6 +65,7 @@ export async function POST(req: Request) {
       "dislikes to `excludeIngredients`, and the request details to the matching",
       "arguments (mealType, maxPrepTime, availableIngredients, nutrition, budget).",
       "Recipes are ranked by how many ingredients overlap with availableIngredients.",
+      "German ingredient names in the request are supported — they are translated for the recipe API automatically.",
       "Do NOT ask the user to re-enter budget or cook time — they are already in",
       "the request. Only ask a brief clarifying question if the request is truly",
       "missing the meal type. Never invent dietary values.",
@@ -195,24 +200,36 @@ export async function POST(req: Request) {
         execute: async (input) => {
           console.log("\n[tool] search_recipes called with:", input);
 
-          const recipes = searchRecipes({
-            query: input.query,
-            dietaryFilters: input.dietaryFilters as DietaryTag[] | undefined,
-            mealType: input.mealType as MealType | undefined,
-            maxPrepTime: input.maxPrepTime,
-            nutrition: input.nutrition as NutritionTag[] | undefined,
-            budget: input.budget as CostTier | undefined,
-            availableIngredients: input.availableIngredients,
-            excludeIngredients: input.excludeIngredients,
-            maxResults: input.maxResults,
-          });
+          try {
+            const recipes = await searchRecipes({
+              query: input.query,
+              dietaryFilters: input.dietaryFilters as DietaryTag[] | undefined,
+              mealType: input.mealType as MealType | undefined,
+              maxPrepTime: input.maxPrepTime,
+              nutrition: input.nutrition as NutritionTag[] | undefined,
+              budget: input.budget as CostTier | undefined,
+              availableIngredients: input.availableIngredients,
+              excludeIngredients: input.excludeIngredients,
+              maxResults: input.maxResults,
+            });
 
-          console.log(
-            `[tool] search_recipes returning ${recipes.length} recipe(s):`,
-            recipes.map((r) => r.title),
-          );
+            console.log(
+              `[tool] search_recipes returning ${recipes.length} recipe(s):`,
+              recipes.map((r) => r.title),
+            );
 
-          return { count: recipes.length, recipes };
+            return { count: recipes.length, recipes };
+          } catch (error) {
+            const message =
+              error instanceof RecipeApiConfigError ||
+              error instanceof RecipeApiError
+                ? error.message
+                : error instanceof Error
+                  ? error.message
+                  : "Recipe search failed.";
+            console.log("[tool] search_recipes error:", message);
+            return { count: 0, recipes: [], error: message };
+          }
         },
       }),
       generate_shopping_list: tool({
@@ -231,7 +248,7 @@ export async function POST(req: Request) {
           console.log("\n[tool] generate_shopping_list called with:", input);
 
           const { preferences } = await readPreferences();
-          const result = generateShoppingList({
+          const result = await generateShoppingList({
             recipeId: input.recipeId,
             availableIngredients: input.availableIngredients,
             householdSize: preferences.householdSize,

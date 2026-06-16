@@ -65,6 +65,7 @@ const en = {
   instructionsHeading: "Instructions",
   viewRecipe: "View recipe",
   back: "Back",
+  backToResults: "Back to results",
   recipeNotFound: "Recipe not found",
 } satisfies Dict;
 
@@ -126,6 +127,7 @@ const de: typeof en = {
   instructionsHeading: "Zubereitung",
   viewRecipe: "Rezept ansehen",
   back: "Zurück",
+  backToResults: "Zurück zu den Ergebnissen",
   recipeNotFound: "Rezept nicht gefunden",
 };
 
