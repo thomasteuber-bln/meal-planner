@@ -1,0 +1,58 @@
+import type { Lang, Recipe } from "@/lib/recipes";
+import {
+  DIET_LABELS,
+  NUTRITION_LABELS,
+  getT,
+} from "@/lib/i18n";
+import { scaleIngredientLine, servingScale } from "@/lib/scaleIngredients";
+
+export function RecipeCard({
+  recipe,
+  lang,
+  householdSize,
+}: {
+  recipe: Recipe;
+  lang: Lang;
+  householdSize?: number | null;
+}) {
+  const t = getT(lang);
+  const factor = servingScale(recipe.servings, householdSize);
+  const effectiveServings = householdSize ?? recipe.servings;
+
+  return (
+    <article className="recipe">
+      <div className="recipe__head">
+        <h3 className="recipe__title">{recipe.title[lang]}</h3>
+        <span className="recipe__time">
+          {recipe.minutes} {t("minutesShort")}
+        </span>
+      </div>
+
+      <p className="recipe__desc">{recipe.description[lang]}</p>
+
+      <div className="recipe__tags">
+        {recipe.tags.map((tag) => (
+          <span key={tag} className="tag tag--diet">
+            {DIET_LABELS[lang][tag]}
+          </span>
+        ))}
+        {recipe.nutrition.map((n) => (
+          <span key={n} className="tag tag--nutrition">
+            {NUTRITION_LABELS[lang][n]}
+          </span>
+        ))}
+      </div>
+
+      <div className="recipe__ingredients">
+        <span className="recipe__ingredients-head">
+          {t("ingredientsHeading")} · {effectiveServings} {t("servings")}
+        </span>
+        <ul>
+          {recipe.ingredients.map((ing, i) => (
+            <li key={i}>{scaleIngredientLine(ing[lang], factor)}</li>
+          ))}
+        </ul>
+      </div>
+    </article>
+  );
+}

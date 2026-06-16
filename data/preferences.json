@@ -1,0 +1,10 @@
+{
+  "diet": [
+    "vegetarian"
+  ],
+  "dislikes": [],
+  "budget": null,
+  "householdSize": 1,
+  "maxCookTime": null,
+  "onboarded": true
+}

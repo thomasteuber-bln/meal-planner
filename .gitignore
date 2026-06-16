@@ -1,0 +1,20 @@
+# dependencies
+/node_modules
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# env files (keep secrets out of git)
+.env
+.env*.local
