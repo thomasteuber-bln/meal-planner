@@ -14,6 +14,8 @@ import {
   type RecipeRequestValues,
 } from "./components/RecipeRequestForm";
 import { RecipeCard } from "./components/RecipeCard";
+import { ShoppingListCard } from "./components/ShoppingListCard";
+import type { ShoppingListResult } from "@/lib/shoppingList";
 
 type Phase = "loading" | "onboarding" | "request" | "results";
 
@@ -30,8 +32,8 @@ function buildRequestMessage(v: RecipeRequestValues): string {
     v.maxPrepTime
       ? `Maximum preparation time: ${v.maxPrepTime} minutes.`
       : "Preparation time: no limit.",
-    v.preferredIngredients.length
-      ? `Preferred ingredients: ${v.preferredIngredients.join(", ")}.`
+    v.availableIngredients.length
+      ? `Available ingredients: ${v.availableIngredients.join(", ")}.`
       : null,
     v.nutrition.length ? `Nutritional goals: ${v.nutrition.join(", ")}.` : null,
     `Budget: ${v.budget}.`,
@@ -45,11 +47,20 @@ function recipesFromPart(part: { output?: unknown }): Recipe[] {
   return output?.recipes ?? [];
 }
 
+function shoppingListFromPart(part: { output?: unknown }): ShoppingListResult | null {
+  const output = part.output;
+  if (!output || typeof output !== "object") return null;
+  if ("error" in output) return null;
+  if (!("recipeId" in output) || !("missing" in output)) return null;
+  return output as ShoppingListResult;
+}
+
 export default function Page() {
   const [phase, setPhase] = useState<Phase>("loading");
   const [prefs, setPrefs] = useState<Preferences | null>(null);
   const [saving, setSaving] = useState(false);
   const [followUp, setFollowUp] = useState("");
+  const [availableIngredients, setAvailableIngredients] = useState<string[]>([]);
   const [lang, setLang] = useState<Lang>("en");
 
   const t = getT(lang);
@@ -103,8 +114,19 @@ export default function Page() {
 
   function submitRequest(values: RecipeRequestValues) {
     setMessages([]);
+    setAvailableIngredients(values.availableIngredients);
     setPhase("results");
     sendMessage({ text: buildRequestMessage(values) }, { body: { language: lang } });
+  }
+
+  function requestShoppingList(recipeId: string) {
+    const avail = availableIngredients.length
+      ? `My available ingredients: ${availableIngredients.join(", ")}.`
+      : "I did not specify available ingredients.";
+    sendMessage(
+      { text: `Generate a shopping list for recipe ${recipeId}. ${avail}` },
+      { body: { language: lang } },
+    );
   }
 
   function sendFollowUp(e: React.FormEvent) {
@@ -204,6 +226,15 @@ export default function Page() {
                   p.state === "output-available",
               )
               .flatMap((p) => recipesFromPart(p as { output?: unknown }));
+            const shoppingLists = message.parts
+              .filter(
+                (p) =>
+                  p.type === "tool-generate_shopping_list" &&
+                  "state" in p &&
+                  p.state === "output-available",
+              )
+              .map((p) => shoppingListFromPart(p as { output?: unknown }))
+              .filter((list): list is ShoppingListResult => list !== null);
 
             return (
               <div key={message.id} className={`block block--${message.role}`}>
@@ -228,10 +259,15 @@ export default function Page() {
                             recipe={r}
                             lang={lang}
                             householdSize={prefs?.householdSize}
+                            onShoppingList={requestShoppingList}
+                            shoppingListBusy={busy}
                           />
                         ))}
                       </div>
                     )}
+                    {shoppingLists.map((list) => (
+                      <ShoppingListCard key={list.recipeId} list={list} lang={lang} />
+                    ))}
                   </>
                 )}
               </div>

@@ -39,9 +39,9 @@ const en = {
   prepMedium: "Medium (≤ 30 min)",
   prepRelaxed: "Relaxed (≤ 45 min)",
   prepAny: "Any",
-  ingredientsLabel: "Preferred ingredients",
+  ingredientsLabel: "Available ingredients",
   ingredientsPlaceholder: "e.g. chicken, rice, broccoli",
-  ingredientsHint: "Optional, comma-separated. We'll prioritize these.",
+  ingredientsHint: "Optional, comma-separated. We rank recipes by what you already have.",
   nutritionLabel: "Nutritional goals",
   budgetLabel: "Budget",
   submit: "Get recommendations",
@@ -57,6 +57,15 @@ const en = {
   servings: "servings",
   minutesShort: "min",
   ingredientsHeading: "Ingredients",
+  shoppingListButton: "Shopping list",
+  shoppingListHeading: "Shopping list",
+  shoppingListFor: "For",
+  shoppingListAllAvailable: "You already have everything for this recipe.",
+  shoppingListMissing: "Items to buy",
+  instructionsHeading: "Instructions",
+  viewRecipe: "View recipe",
+  back: "Back",
+  recipeNotFound: "Recipe not found",
 } satisfies Dict;
 
 const de: typeof en = {
@@ -90,9 +99,10 @@ const de: typeof en = {
   prepMedium: "Mittel (≤ 30 Min.)",
   prepRelaxed: "Entspannt (≤ 45 Min.)",
   prepAny: "Egal",
-  ingredientsLabel: "Bevorzugte Zutaten",
+  ingredientsLabel: "Vorhandene Zutaten",
   ingredientsPlaceholder: "z. B. Hähnchen, Reis, Brokkoli",
-  ingredientsHint: "Optional, durch Komma getrennt. Wir priorisieren diese.",
+  ingredientsHint:
+    "Optional, durch Komma getrennt. Rezepte mit mehr Überschneidung stehen oben.",
   nutritionLabel: "Ernährungsziele",
   budgetLabel: "Budget",
   submit: "Empfehlungen anzeigen",
@@ -108,6 +118,15 @@ const de: typeof en = {
   servings: "Portionen",
   minutesShort: "Min.",
   ingredientsHeading: "Zutaten",
+  shoppingListButton: "Einkaufsliste",
+  shoppingListHeading: "Einkaufsliste",
+  shoppingListFor: "Für",
+  shoppingListAllAvailable: "Du hast bereits alles für dieses Rezept.",
+  shoppingListMissing: "Noch einkaufen",
+  instructionsHeading: "Zubereitung",
+  viewRecipe: "Rezept ansehen",
+  back: "Zurück",
+  recipeNotFound: "Rezept nicht gefunden",
 };
 
 const translations: Record<Lang, typeof en> = { en, de };

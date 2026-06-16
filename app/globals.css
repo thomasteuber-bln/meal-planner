@@ -315,6 +315,26 @@ body {
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--panel);
+  transition: border-color 0.15s ease;
+}
+
+.recipe:has(.recipe__link:hover) {
+  border-color: var(--accent);
+}
+
+.recipe__link {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.recipe__cta {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--accent-2);
 }
 
 .recipe__head {
@@ -386,6 +406,116 @@ body {
 
 .recipe__ingredients li {
   margin: 2px 0;
+}
+
+.recipe__shopping {
+  align-self: flex-start;
+  margin-top: 4px;
+  font-size: 0.82rem;
+  padding: 6px 12px;
+}
+
+.shopping-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel-2);
+}
+
+.shopping-list__title {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.3;
+}
+
+.shopping-list__head {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.shopping-list__empty {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.shopping-list ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.85rem;
+}
+
+.shopping-list li {
+  margin: 2px 0;
+}
+
+.recipe-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+}
+
+.recipe-detail__back {
+  align-self: flex-start;
+  font-size: 0.85rem;
+}
+
+.recipe-detail__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.recipe-detail__title {
+  margin: 0;
+  font-size: 1.35rem;
+  line-height: 1.25;
+}
+
+.recipe-detail__section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.recipe-detail__section-head {
+  margin: 0;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.recipe-detail__list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.9rem;
+}
+
+.recipe-detail__list li {
+  margin: 4px 0;
+}
+
+.recipe-detail__steps {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 0.9rem;
+}
+
+.recipe-detail__steps li {
+  margin: 10px 0;
+  padding-left: 4px;
 }
 
 .followup {

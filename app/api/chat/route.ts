@@ -15,6 +15,7 @@ import {
   type NutritionTag,
 } from "@/lib/recipes";
 import { readPreferences, writePreferences } from "@/lib/preferences";
+import { generateShoppingList } from "@/lib/shoppingList";
 
 // Allow streaming responses up to 30 seconds
 export const maxDuration = 30;
@@ -54,21 +55,25 @@ export async function POST(req: Request) {
       `Always write your replies to the user in ${langName}.`,
       "The user has completed onboarding (diet, dislikes, household size) and",
       "submits a structured request that already includes the meal type,",
-      "preparation time, preferred ingredients, nutrition goals, and budget.",
+      "preparation time, available ingredients, nutrition goals, and budget.",
       "First call get_preferences to load their saved diet and dislikes.",
       "Then call search_recipes: map the saved diet to `dietaryFilters`, saved",
       "dislikes to `excludeIngredients`, and the request details to the matching",
-      "arguments (mealType, maxPrepTime, preferredIngredients, nutrition, budget).",
+      "arguments (mealType, maxPrepTime, availableIngredients, nutrition, budget).",
+      "Recipes are ranked by how many ingredients overlap with availableIngredients.",
       "Do NOT ask the user to re-enter budget or cook time — they are already in",
       "the request. Only ask a brief clarifying question if the request is truly",
       "missing the meal type. Never invent dietary values.",
       "If the user asks to change a saved preference (diet or dislikes), call",
       "set_preferences to persist it, then continue.",
+      "If the user asks for a shopping list for a recipe, call generate_shopping_list",
+      "with the recipeId and their availableIngredients (from the request or message).",
       "The app displays the search_recipes results as visual cards with full",
       "details (title, time, tags, ingredients). Do NOT list, number, name, or",
       "describe the individual recipes — the cards already show them. Reply with a",
       "single short paragraph (1-2 sentences) summarizing why these picks fit the",
-      "request, then stop.",
+      "request, then stop. For shopping lists, keep text brief — the app renders",
+      "the list from generate_shopping_list output.",
     ].join(" "),
     messages: convertToModelMessages(messages),
     // Let the model call a tool and then continue with a follow-up reply.
@@ -169,10 +174,12 @@ export async function POST(req: Request) {
           budget: costTier
             .optional()
             .describe("Budget tier: low (cheap), medium, or high"),
-          preferredIngredients: z
+          availableIngredients: z
             .array(z.string())
             .optional()
-            .describe("Ingredients the user would like to include (used to rank)"),
+            .describe(
+              "Ingredients the user already has on hand (used to rank by overlap)",
+            ),
           excludeIngredients: z
             .array(z.string())
             .optional()
@@ -195,7 +202,7 @@ export async function POST(req: Request) {
             maxPrepTime: input.maxPrepTime,
             nutrition: input.nutrition as NutritionTag[] | undefined,
             budget: input.budget as CostTier | undefined,
-            preferredIngredients: input.preferredIngredients,
+            availableIngredients: input.availableIngredients,
             excludeIngredients: input.excludeIngredients,
             maxResults: input.maxResults,
           });
@@ -206,6 +213,41 @@ export async function POST(req: Request) {
           );
 
           return { count: recipes.length, recipes };
+        },
+      }),
+      generate_shopping_list: tool({
+        description:
+          "Build a shopping list of missing ingredients for a recipe, given what " +
+          "the user already has. Scales amounts to household size from preferences.",
+        inputSchema: z.object({
+          recipeId: z
+            .string()
+            .describe("Recipe id from search_recipes results, e.g. 'r1'"),
+          availableIngredients: z
+            .array(z.string())
+            .describe("Ingredients the user already has on hand"),
+        }),
+        execute: async (input) => {
+          console.log("\n[tool] generate_shopping_list called with:", input);
+
+          const { preferences } = await readPreferences();
+          const result = generateShoppingList({
+            recipeId: input.recipeId,
+            availableIngredients: input.availableIngredients,
+            householdSize: preferences.householdSize,
+          });
+
+          if ("error" in result) {
+            console.log("[tool] generate_shopping_list error:", result.error);
+            return result;
+          }
+
+          console.log(
+            `[tool] generate_shopping_list missing ${result.missingCount} item(s) for`,
+            result.recipeTitle.en,
+          );
+
+          return result;
         },
       }),
     },

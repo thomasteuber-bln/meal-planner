@@ -1,4 +1,5 @@
 import type { Lang, Recipe } from "@/lib/recipes";
+import Link from "next/link";
 import {
   DIET_LABELS,
   NUTRITION_LABELS,
@@ -10,10 +11,14 @@ export function RecipeCard({
   recipe,
   lang,
   householdSize,
+  onShoppingList,
+  shoppingListBusy,
 }: {
   recipe: Recipe;
   lang: Lang;
   householdSize?: number | null;
+  onShoppingList?: (recipeId: string) => void;
+  shoppingListBusy?: boolean;
 }) {
   const t = getT(lang);
   const factor = servingScale(recipe.servings, householdSize);
@@ -21,38 +26,53 @@ export function RecipeCard({
 
   return (
     <article className="recipe">
-      <div className="recipe__head">
-        <h3 className="recipe__title">{recipe.title[lang]}</h3>
-        <span className="recipe__time">
-          {recipe.minutes} {t("minutesShort")}
-        </span>
-      </div>
-
-      <p className="recipe__desc">{recipe.description[lang]}</p>
-
-      <div className="recipe__tags">
-        {recipe.tags.map((tag) => (
-          <span key={tag} className="tag tag--diet">
-            {DIET_LABELS[lang][tag]}
+      <Link href={`/recipes/${recipe.id}`} className="recipe__link">
+        <div className="recipe__head">
+          <h3 className="recipe__title">{recipe.title[lang]}</h3>
+          <span className="recipe__time">
+            {recipe.minutes} {t("minutesShort")}
           </span>
-        ))}
-        {recipe.nutrition.map((n) => (
-          <span key={n} className="tag tag--nutrition">
-            {NUTRITION_LABELS[lang][n]}
-          </span>
-        ))}
-      </div>
+        </div>
 
-      <div className="recipe__ingredients">
-        <span className="recipe__ingredients-head">
-          {t("ingredientsHeading")} · {effectiveServings} {t("servings")}
-        </span>
-        <ul>
-          {recipe.ingredients.map((ing, i) => (
-            <li key={i}>{scaleIngredientLine(ing[lang], factor)}</li>
+        <p className="recipe__desc">{recipe.description[lang]}</p>
+
+        <div className="recipe__tags">
+          {recipe.tags.map((tag) => (
+            <span key={tag} className="tag tag--diet">
+              {DIET_LABELS[lang][tag]}
+            </span>
           ))}
-        </ul>
-      </div>
+          {recipe.nutrition.map((n) => (
+            <span key={n} className="tag tag--nutrition">
+              {NUTRITION_LABELS[lang][n]}
+            </span>
+          ))}
+        </div>
+
+        <div className="recipe__ingredients">
+          <span className="recipe__ingredients-head">
+            {t("ingredientsHeading")} · {effectiveServings} {t("servings")}
+          </span>
+          <ul>
+            {recipe.ingredients.map((ing, i) => (
+              <li key={i}>{scaleIngredientLine(ing[lang], factor)}</li>
+            ))}
+          </ul>
+        </div>
+
+        <span className="recipe__cta">{t("viewRecipe")} →</span>
+      </Link>
+
+      {onShoppingList && (
+        <button
+          type="button"
+          className="btn recipe__shopping"
+          onClick={() => onShoppingList(recipe.id)}
+          disabled={shoppingListBusy}
+        >
+          {t("shoppingListButton")}
+        </button>
+      )}
     </article>
   );
 }
