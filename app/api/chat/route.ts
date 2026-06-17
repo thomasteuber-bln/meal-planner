@@ -16,10 +16,34 @@ import {
 } from "@/lib/recipes";
 import { readPreferences, writePreferences } from "@/lib/preferences";
 import { generateShoppingList } from "@/lib/shoppingList";
+import { identifyIngredientsFromImage } from "@/lib/identifyIngredientsFromImage";
 import {
   RecipeApiConfigError,
   RecipeApiError,
 } from "@/lib/spoonacular";
+
+type AttachedImage = {
+  imageBase64: string;
+  mimeType: string;
+};
+
+function extractAttachedImages(messages: UIMessage[]): AttachedImage[] {
+  const images: AttachedImage[] = [];
+
+  for (const message of messages) {
+    if (message.role !== "user") continue;
+    for (const part of message.parts) {
+      if (part.type !== "file") continue;
+      const mediaType = "mediaType" in part ? part.mediaType : undefined;
+      if (!mediaType?.startsWith("image/")) continue;
+      const url = "url" in part ? part.url : undefined;
+      if (!url) continue;
+      images.push({ imageBase64: url, mimeType: mediaType });
+    }
+  }
+
+  return images;
+}
 
 // Allow streaming responses up to 30 seconds
 export const maxDuration = 30;
@@ -51,6 +75,8 @@ export async function POST(req: Request) {
   }: { messages: UIMessage[]; language?: "en" | "de" } = await req.json();
 
   const langName = language === "de" ? "German" : "English";
+  const uiLanguage = language === "de" ? "de" : "en";
+  const attachedImages = extractAttachedImages(messages);
 
   const result = streamText({
     model: openai("gpt-4o-mini"),
@@ -73,12 +99,18 @@ export async function POST(req: Request) {
       "set_preferences to persist it, then continue.",
       "If the user asks for a shopping list for a recipe, call generate_shopping_list",
       "with the recipeId and their availableIngredients (from the request or message).",
+      "If the user attaches a photo of their fridge, pantry, or storage and wants",
+      "ingredients identified, call identify_ingredients_from_image (use attached",
+      "image when no base64 is provided). Merge the result into availableIngredients",
+      "for search_recipes when they ask for recipe recommendations.",
       "The app displays the search_recipes results as visual cards with full",
       "details (title, time, tags, ingredients). Do NOT list, number, name, or",
       "describe the individual recipes — the cards already show them. Reply with a",
       "single short paragraph (1-2 sentences) summarizing why these picks fit the",
       "request, then stop. For shopping lists, keep text brief — the app renders",
       "the list from generate_shopping_list output.",
+      "For identify_ingredients_from_image, keep text brief — the app renders",
+      "the ingredient list from tool output.",
     ].join(" "),
     messages: convertToModelMessages(messages),
     // Let the model call a tool and then continue with a follow-up reply.
@@ -230,6 +262,77 @@ export async function POST(req: Request) {
             console.log("[tool] search_recipes error:", message);
             return { count: 0, recipes: [], error: message };
           }
+        },
+      }),
+      identify_ingredients_from_image: tool({
+        description:
+          "Analyze a photo of a fridge, pantry, or food storage and list visible " +
+          "food ingredients. Use when the user uploads or references a kitchen photo. " +
+          "Omit imageBase64 to analyze the user's attached chat image.",
+        inputSchema: z.object({
+          imageBase64: z
+            .string()
+            .optional()
+            .describe(
+              "Base64 image data or data URL. Omit to use the user's attached photo.",
+            ),
+          mimeType: z
+            .string()
+            .optional()
+            .describe("MIME type, e.g. image/jpeg. Required with imageBase64."),
+          imageIndex: z
+            .number()
+            .int()
+            .min(0)
+            .optional()
+            .describe(
+              "Which attached user image to analyze when imageBase64 is omitted (default 0).",
+            ),
+        }),
+        execute: async (input) => {
+          console.log("\n[tool] identify_ingredients_from_image called");
+
+          let imageBase64 = input.imageBase64;
+          let mimeType = input.mimeType;
+
+          if (!imageBase64) {
+            const index = input.imageIndex ?? 0;
+            const attached = attachedImages[index];
+            if (!attached) {
+              const message = "No image attached. Ask the user to upload a photo.";
+              console.log("[tool] identify_ingredients_from_image error:", message);
+              return { count: 0, ingredients: [], error: message };
+            }
+            imageBase64 = attached.imageBase64;
+            mimeType = attached.mimeType;
+          }
+
+          if (!mimeType) {
+            const message = "mimeType is required when providing imageBase64.";
+            console.log("[tool] identify_ingredients_from_image error:", message);
+            return { count: 0, ingredients: [], error: message };
+          }
+
+          const result = await identifyIngredientsFromImage({
+            imageBase64,
+            mimeType,
+            language: uiLanguage,
+          });
+
+          if ("error" in result) {
+            console.log(
+              "[tool] identify_ingredients_from_image error:",
+              result.error,
+            );
+            return { count: 0, ingredients: [], error: result.error };
+          }
+
+          console.log(
+            `[tool] identify_ingredients_from_image found ${result.count} ingredient(s):`,
+            result.ingredients,
+          );
+
+          return result;
         },
       }),
       generate_shopping_list: tool({

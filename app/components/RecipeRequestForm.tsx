@@ -8,6 +8,7 @@ import {
   NUTRITION_LABELS,
   getT,
 } from "@/lib/i18n";
+import { IngredientPhotoScan } from "./IngredientPhotoScan";
 
 const MEAL_OPTIONS: MealType[] = ["breakfast", "lunch", "dinner"];
 
@@ -129,6 +130,12 @@ export function RecipeRequestForm({
           value={ingredients}
           placeholder={t("ingredientsPlaceholder")}
           onChange={(e) => setIngredients(e.target.value)}
+        />
+        <IngredientPhotoScan
+          lang={lang}
+          ingredients={ingredients}
+          onIngredientsChange={setIngredients}
+          disabled={busy}
         />
         <span className="field__hint">{t("ingredientsHint")}</span>
       </label>
