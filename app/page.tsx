@@ -15,6 +15,10 @@ import {
 } from "./components/RecipeRequestForm";
 import { RecipeCard } from "./components/RecipeCard";
 import { ShoppingListCard } from "./components/ShoppingListCard";
+import {
+  IdentifiedIngredientsCard,
+  type IdentifiedIngredientsResult,
+} from "./components/IdentifiedIngredientsCard";
 import type { ShoppingListResult } from "@/lib/shoppingList";
 import {
   cacheRecipeForDetail,
@@ -67,11 +71,21 @@ function shoppingListFromPart(part: { output?: unknown }): ShoppingListResult | 
   return output as ShoppingListResult;
 }
 
+function identifiedIngredientsFromPart(part: {
+  output?: unknown;
+}): IdentifiedIngredientsResult | null {
+  const output = part.output;
+  if (!output || typeof output !== "object") return null;
+  if (!("ingredients" in output)) return null;
+  return output as IdentifiedIngredientsResult;
+}
+
 export default function Page() {
   const [phase, setPhase] = useState<Phase>("loading");
   const [prefs, setPrefs] = useState<Preferences | null>(null);
   const [saving, setSaving] = useState(false);
   const [followUp, setFollowUp] = useState("");
+  const [followUpFile, setFollowUpFile] = useState<File | null>(null);
   const [availableIngredients, setAvailableIngredients] = useState<string[]>([]);
   const [lang, setLang] = useState<Lang>("en");
 
@@ -183,8 +197,25 @@ export default function Page() {
   function sendFollowUp(e: React.FormEvent) {
     e.preventDefault();
     const text = followUp.trim();
-    if (!text || busy) return;
-    sendMessage({ text }, { body: { language: lang } });
+    if ((!text && !followUpFile) || busy) return;
+
+    if (followUpFile) {
+      const prompt =
+        text ||
+        (lang === "de"
+          ? "Identifiziere die Zutat in diesem Foto."
+          : "Identify the ingredients in this photo.");
+      const transfer = new DataTransfer();
+      transfer.items.add(followUpFile);
+      sendMessage(
+        { text: prompt, files: transfer.files },
+        { body: { language: lang } },
+      );
+      setFollowUpFile(null);
+    } else {
+      sendMessage({ text }, { body: { language: lang } });
+    }
+
     setFollowUp("");
   }
 
@@ -298,6 +329,15 @@ export default function Page() {
               )
               .map((p) => shoppingListFromPart(p as { output?: unknown }))
               .filter((list): list is ShoppingListResult => list !== null);
+            const identifiedLists = message.parts
+              .filter(
+                (p) =>
+                  p.type === "tool-identify_ingredients_from_image" &&
+                  "state" in p &&
+                  p.state === "output-available",
+              )
+              .map((p) => identifiedIngredientsFromPart(p as { output?: unknown }))
+              .filter((list): list is IdentifiedIngredientsResult => list !== null);
 
             return (
               <div key={message.id} className={`block block--${message.role}`}>
@@ -337,6 +377,13 @@ export default function Page() {
                     {shoppingLists.map((list) => (
                       <ShoppingListCard key={list.recipeId} list={list} lang={lang} />
                     ))}
+                    {identifiedLists.map((list, i) => (
+                      <IdentifiedIngredientsCard
+                        key={`identified-${i}-${list.ingredients.join("-")}`}
+                        result={list}
+                        lang={lang}
+                      />
+                    ))}
                   </>
                 )}
               </div>
@@ -353,7 +400,29 @@ export default function Page() {
               onChange={(e) => setFollowUp(e.target.value)}
               disabled={busy}
             />
-            <button className="btn btn--primary" type="submit" disabled={busy}>
+            <label className="followup__attach">
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                capture="environment"
+                className="photo-scan__input"
+                disabled={busy}
+                onChange={(e) => {
+                  const file = e.target.files?.[0] ?? null;
+                  e.target.value = "";
+                  setFollowUpFile(file);
+                }}
+              />
+              {t("photoScanButton")}
+            </label>
+            {followUpFile && (
+              <span className="followup__file">{followUpFile.name}</span>
+            )}
+            <button
+              className="btn btn--primary"
+              type="submit"
+              disabled={busy || (!followUp.trim() && !followUpFile)}
+            >
               {t("send")}
             </button>
           </form>

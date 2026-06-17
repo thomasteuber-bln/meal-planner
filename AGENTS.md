@@ -43,6 +43,7 @@ npx tsc --noEmit
 └────────────────────┬────────────────────────────────────┘
                      │ POST /api/chat  (agent)
                      │ GET/POST /api/preferences  (CRUD)
+                     │ POST /api/identify-ingredients  (photo scan)
                      │ GET /api/recipes/[id]  (recipe detail)
                      ▼
 ┌─────────────────────────────────────────────────────────┐
@@ -56,7 +57,8 @@ npx tsc --noEmit
 ┌─────────────────────────────────────────────────────────┐
 │  Domain / agent logic (stable, UI-agnostic)             │
 │  lib/recipes.ts, lib/spoonacular.ts, lib/translateRecipe.ts, │
-│  lib/foodTermsEn.ts, lib/shoppingList.ts, lib/preferences.ts │
+│  lib/foodTermsEn.ts, lib/shoppingList.ts, lib/preferences.ts, │
+│  lib/identifyIngredientsFromImage.ts                         │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -91,7 +93,7 @@ npx tsc --noEmit
    - Search results use `{ skipSteps: true }` (title, description, ingredients only — cards do not show steps).
    - Recipe detail (`getRecipeById`) performs full translation including steps on first open.
 
-Logs: `[spoonacular]`, `[search]`, `[translate]`, `[foodTerms]`.
+Logs: `[spoonacular]`, `[search]`, `[translate]`, `[foodTerms]`, `[identify]`.
 
 ### Spoonacular quota (free tier)
 
@@ -109,6 +111,7 @@ Logs: `[spoonacular]`, `[search]`, `[translate]`, `[foodTerms]`.
 | `GET /api/preferences` | `app/api/preferences/route.ts` | Read saved preferences (UI onboarding) |
 | `POST /api/preferences` | `app/api/preferences/route.ts` | Write preferences (UI onboarding) |
 | `GET /api/recipes/[id]` | `app/api/recipes/[id]/route.ts` | Fetch one recipe by Spoonacular id (for detail page) |
+| `POST /api/identify-ingredients` | `app/api/identify-ingredients/route.ts` | Vision scan of fridge/pantry photo → ingredient list |
 
 ### `POST /api/chat`
 
@@ -128,6 +131,20 @@ Logs: `[spoonacular]`, `[search]`, `[translate]`, `[foodTerms]`.
 - `streamText` with `stopWhen: stepCountIs(5)` — allows tool call → follow-up reply loops.
 - `maxDuration = 30` seconds.
 - System prompt instructs the model to reply in the requested language and keep text brief (cards show recipe details).
+
+### `POST /api/identify-ingredients`
+
+**Request body:**
+
+```json
+{
+  "imageBase64": "<base64 or data URL>",
+  "mimeType": "image/jpeg",
+  "language": "en"
+}
+```
+
+**Response:** `{ count, ingredients }` or `{ error }` (HTTP 400). Uses the same `identifyIngredientsFromImage()` lib as the agent tool. Accepts JPEG, PNG, WebP, GIF up to ~4 MB. `maxDuration = 30` seconds.
 
 ## Tools
 
@@ -157,6 +174,14 @@ All tools are defined in `app/api/chat/route.ts`. Names use **snake_case**.
 
 German ingredient names in `availableIngredients` or `query` are supported; translation to English for Spoonacular is automatic.
 
+### `identify_ingredients_from_image`
+
+- **Input (all optional):** `imageBase64`, `mimeType`, `imageIndex` (when using a chat attachment instead of base64)
+- **Output:** `{ count, ingredients }` or `{ count: 0, ingredients: [], error }`
+- **Implementation:** `lib/identifyIngredientsFromImage.ts` → OpenAI vision (`gpt-4o-mini`)
+- **UI:** `IngredientPhotoScan` on the request form calls `POST /api/identify-ingredients` (same lib). Results chat can attach a photo; the agent calls this tool against the attachment.
+- **Logs:** `[tool] identify_ingredients_from_image called`, ingredient count or error; `[identify]` in lib
+
 ### `generate_shopping_list`
 
 - **Input:** `recipeId`, `availableIngredients`
@@ -178,7 +203,10 @@ app/
   api/chat/route.ts         # Agent entry point
   api/preferences/route.ts
   api/recipes/[id]/route.ts # Single-recipe JSON for detail page
+  api/identify-ingredients/route.ts # Fridge/pantry photo → ingredients
   components/               # UI only — no agent or domain logic
+    IngredientPhotoScan.tsx  # Fridge/pantry photo → ingredients field
+    IdentifiedIngredientsCard.tsx # Renders tool-identify_ingredients_from_image output
   recipes/[id]/page.tsx     # Recipe detail route
   page.tsx                  # Flow orchestrator (onboarding → request → results)
   globals.css
@@ -193,6 +221,7 @@ lib/
   shoppingList.ts           # Missing-ingredient shopping lists
   preferences.ts            # Read/write preferences.json
   scaleIngredients.ts       # Metric amount scaling for household size
+  identifyIngredientsFromImage.ts # OpenAI vision → pantry ingredients
   i18n.ts                   # EN/DE UI strings and label maps
 ```
 
@@ -222,7 +251,7 @@ lib/
 ### Data & secrets
 
 - Never commit `.env.local`. Use `.env.local.example` as the template.
-- `OPENAI_API_KEY` is read by `@ai-sdk/openai` and `lib/translateRecipe.ts` / `lib/foodTermsEn.ts` on the server only.
+- `OPENAI_API_KEY` is read by `@ai-sdk/openai`, `lib/identifyIngredientsFromImage.ts`, `lib/ translateRecipe.ts`, and `lib/foodTermsEn.ts` on the server only.
 - `SPOONACULAR_API_KEY` is read only in `lib/spoonacular.ts` on the server — never expose it to the client.
 - `data/preferences.json` is committed with empty defaults; user-specific values are written at runtime.
 
@@ -240,9 +269,10 @@ The results view depends on this contract — preserve it when changing either s
 2. Agent calls `get_preferences`, then `search_recipes`, then streams a **short intro paragraph** (no per-recipe lists).
 3. UI reads `tool-search_recipes` parts with `state === "output-available"` and renders `output.recipes` via `RecipeCard`. Tool errors in `output.error` are shown inline.
 4. UI reads `tool-generate_shopping_list` parts and renders via `ShoppingListCard`. Recipe cards expose a shopping-list button that sends a follow-up chat message.
-5. Clicking a recipe card navigates to `/recipes/[id]` (Spoonacular numeric id). `RecipeDetail` loads from session cache + `GET /api/recipes/[id]`.
-6. Results phase state (messages, available ingredients) is persisted in **sessionStorage** via `lib/clientSession.ts` so **Back to results** restores the results view after visiting a detail page.
-7. `RecipeCard` applies household-size scaling client-side from `prefs.householdSize`; the tool returns base recipe data.
+5. UI reads `tool-identify_ingredients_from_image` parts and renders via `IdentifiedIngredientsCard`. The request form scans photos via `POST /api/identify-ingredients` (merges into the ingredients field).
+6. Clicking a recipe card navigates to `/recipes/[id]` (Spoonacular numeric id). `RecipeDetail` loads from session cache + `GET /api/recipes/[id]`.
+7. Results phase state (messages, available ingredients) is persisted in **sessionStorage** via `lib/clientSession.ts` so **Back to results** restores the results view after visiting a detail page.
+8. `RecipeCard` applies household-size scaling client-side from `prefs.householdSize`; the tool returns base recipe data.
 
 A new frontend only needs to implement the same HTTP calls and parse the same tool output shape.
 
