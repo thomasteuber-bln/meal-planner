@@ -7,7 +7,6 @@ import type {
   Recipe,
   SearchRecipesArgs,
 } from "./recipes";
-import { toEnglishFoodQuery, toEnglishFoodTerms } from "./foodTermsEn";
 
 const BASE_URL = "https://api.spoonacular.com";
 
@@ -96,6 +95,11 @@ async function spoonacularGet<T>(
     cache: "no-store",
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
+  const quotaUsed = res.headers.get("X-API-Quota-Used");
+  const quotaLeft = res.headers.get("X-API-Quota-Left");
+  if (quotaUsed && quotaLeft) {
+    console.log(`[spoonacular] quota used today: ${quotaUsed}, left: ${quotaLeft}`);
+  }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new RecipeApiError(
@@ -283,99 +287,33 @@ function buildDietParams(filters: DietaryTag[]): {
   };
 }
 
-function buildNutritionParams(
-  nutrition: NutritionTag[],
-): Record<string, number> {
-  const params: Record<string, number> = {};
-  if (nutrition.includes("high-protein")) params.minProtein = 25;
-  if (nutrition.includes("high-fiber")) params.minFiber = 5;
-  if (nutrition.includes("low-carb")) params.maxCarbs = 30;
-  if (nutrition.includes("low-calorie")) params.maxCalories = 450;
-  if (nutrition.includes("low-fat")) params.maxFat = 12;
-  return params;
-}
 
-function mealTypeParam(mealType?: MealType): string | undefined {
-  if (mealType === "breakfast") return "breakfast";
-  if (mealType === "lunch" || mealType === "dinner") return "main course";
-  return undefined;
-}
-
-function maxPriceParam(budget?: CostTier): number | undefined {
-  if (budget === "low") return 3;
-  if (budget === "medium") return 8;
-  return undefined;
-}
-
-export async function fetchSpoonacularRecipes(
-  args: SearchRecipesArgs,
-): Promise<Recipe[]> {
-  const {
-    query = "",
-    dietaryFilters = [],
-    mealType,
-    maxPrepTime,
-    nutrition = [],
-    budget,
-    availableIngredients = [],
-    excludeIngredients = [],
-    maxResults = 5,
-  } = args;
-
-  const fetchCount = Math.min(Math.max(maxResults * 2, 6), 12);
-  const dietParams = buildDietParams(dietaryFilters);
-  const nutritionParams = buildNutritionParams(nutrition);
-
-  const queryEn = await toEnglishFoodQuery(
-    query || availableIngredients.join(" "),
-  );
-  const availableEn = await toEnglishFoodTerms(availableIngredients);
-  const excludeEn = await toEnglishFoodTerms(excludeIngredients);
-
-  const baseParams = {
-    number: fetchCount,
+function buildPoolSearchParams(args: {
+  dietaryFilters: DietaryTag[];
+  excludeEn: string[];
+  fetchCount: number;
+}) {
+  const dietParams = buildDietParams(args.dietaryFilters);
+  return {
+    number: args.fetchCount,
     addRecipeInformation: true,
-    addRecipeInstructions: true,
-    addRecipeNutrition: true,
-    instructionsRequired: true,
-    fillIngredients: true,
+    addRecipeInstructions: false,
+    addRecipeNutrition: false,
+    instructionsRequired: false,
+    fillIngredients: false,
     sort: "popularity" as const,
-    type: mealTypeParam(mealType),
-    maxReadyTime: maxPrepTime,
-    maxPrice: maxPriceParam(budget),
+    excludeIngredients: args.excludeEn.length ? args.excludeEn.join(",") : undefined,
     ...dietParams,
-    ...nutritionParams,
   };
+}
 
-  // Single-ingredient searches work better as query than strict includeIngredients.
-  const useStrictInclude = availableEn.length > 1;
+export function isFullRecipe(recipe: Recipe): boolean {
+  const step = recipe.steps[0]?.en ?? "";
+  return !step.startsWith("Full instructions are available");
+}
 
-  let data = await spoonacularGet<ComplexSearchResponse>("/recipes/complexSearch", {
-    ...baseParams,
-    query: queryEn || undefined,
-    includeIngredients: useStrictInclude ? availableEn.join(",") : undefined,
-    excludeIngredients: excludeEn.length ? excludeEn.join(",") : undefined,
-  });
-
-  if (data.results.length === 0 && (availableEn.length > 0 || queryEn)) {
-    const fallbackQuery = [queryEn, ...availableEn].filter(Boolean).join(" ");
-    console.log("[spoonacular] retrying search with query:", fallbackQuery);
-    data = await spoonacularGet<ComplexSearchResponse>("/recipes/complexSearch", {
-      ...baseParams,
-      query: fallbackQuery,
-      excludeIngredients: excludeEn.length ? excludeEn.join(",") : undefined,
-    });
-  }
-
-  if (data.results.length === 0) {
-    console.log("[spoonacular] no results for", {
-      queryEn,
-      availableEn,
-      dietaryFilters,
-    });
-  }
-
-  const recipes = data.results
+function mapSearchResults(data: ComplexSearchResponse): Recipe[] {
+  return data.results
     .map((item) => {
       try {
         return mapSpoonacularRecipe(item);
@@ -385,8 +323,108 @@ export async function fetchSpoonacularRecipes(
       }
     })
     .filter((recipe): recipe is Recipe => recipe !== null);
-  for (const recipe of recipes) cacheRecipe(recipe);
+}
+
+async function complexSearch(
+  params: Record<string, string | number | boolean | undefined>,
+): Promise<ComplexSearchResponse> {
+  return spoonacularGet<ComplexSearchResponse>("/recipes/complexSearch", params);
+}
+
+async function fetchRecipePool(
+  poolParams: ReturnType<typeof buildPoolSearchParams>,
+  query: string,
+): Promise<Recipe[]> {
+  if (query.trim()) {
+    const data = await complexSearch({ ...poolParams, query: query.trim() });
+    const recipes = mapSearchResults(data);
+    if (recipes.length > 0) return recipes;
+  }
+
+  console.log("[spoonacular] retrying with no query (diet/exclude only)");
+  const data = await complexSearch(poolParams);
+  return mapSearchResults(data);
+}
+
+export interface PreparedSearchTerms {
+  availableEn: string[];
+  excludeEn: string[];
+  queryEn: string;
+}
+
+export async function fetchSpoonacularRecipes(
+  args: SearchRecipesArgs,
+  terms: PreparedSearchTerms,
+): Promise<Recipe[]> {
+  const {
+    dietaryFilters = [],
+    availableIngredients = [],
+    maxResults = 5,
+  } = args;
+
+  const hasPantry = availableIngredients.length > 0;
+  const fetchCount = hasPantry ? 8 : Math.min(Math.max(maxResults * 2, 6), 8);
+
+  const { availableEn, excludeEn, queryEn } = terms;
+
+  const poolParams = buildPoolSearchParams({
+    dietaryFilters,
+    excludeEn,
+    fetchCount,
+  });
+
+  const searchQuery = hasPantry
+    ? [...availableEn, queryEn].filter(Boolean).join(" ")
+    : queryEn;
+
+  const recipes = await fetchRecipePool(poolParams, searchQuery);
+
+  if (recipes.length === 0) {
+    console.log("[spoonacular] no results for", {
+      queryEn,
+      availableEn,
+      dietaryFilters,
+    });
+  }
+
+  for (const recipe of recipes) {
+    const cached = getCachedRecipe(recipe.id);
+    if (!cached || !isFullRecipe(cached)) {
+      cacheRecipe(recipe);
+    }
+  }
   return recipes;
+}
+
+export async function enrichRecipesForDisplay(
+  recipes: Recipe[],
+): Promise<Recipe[]> {
+  const needsFetch = recipes.filter((recipe) => {
+    const cached = getCachedRecipe(recipe.id);
+    return !cached || !isFullRecipe(cached);
+  });
+  if (needsFetch.length === 0) {
+    return recipes.map((recipe) => getCachedRecipe(recipe.id) ?? recipe);
+  }
+
+  const ids = needsFetch.map((recipe) => recipe.id).join(",");
+  const data = await spoonacularGet<SpoonacularRecipePayload[]>(
+    "/recipes/informationBulk",
+    { ids, includeNutrition: false },
+  );
+
+  const byId = new Map<string, Recipe>();
+  for (const item of data) {
+    try {
+      const recipe = mapSpoonacularRecipe(item);
+      cacheRecipe(recipe);
+      byId.set(recipe.id, recipe);
+    } catch (error) {
+      console.warn("[spoonacular] skipped bulk recipe", item.id, error);
+    }
+  }
+
+  return recipes.map((recipe) => byId.get(recipe.id) ?? getCachedRecipe(recipe.id) ?? recipe);
 }
 
 export async function fetchSpoonacularRecipeById(
@@ -396,7 +434,7 @@ export async function fetchSpoonacularRecipeById(
   if (!Number.isFinite(numericId)) return undefined;
 
   const cached = getCachedRecipe(id);
-  if (cached) return cached;
+  if (cached && isFullRecipe(cached)) return cached;
 
   const data = await spoonacularGet<SpoonacularRecipePayload>(
     `/recipes/${numericId}/information`,
