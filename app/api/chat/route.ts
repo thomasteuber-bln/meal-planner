@@ -64,7 +64,7 @@ export async function POST(req: Request) {
       "Then call search_recipes: map the saved diet to `dietaryFilters`, saved",
       "dislikes to `excludeIngredients`, and the request details to the matching",
       "arguments (mealType, maxPrepTime, availableIngredients, nutrition, budget).",
-      "Recipes are ranked by how many ingredients overlap with availableIngredients.",
+      "Recipes are ranked by fewest missing ingredients (best pantry overlap).",
       "German ingredient names in the request are supported — they are translated for the recipe API automatically.",
       "Do NOT ask the user to re-enter budget or cook time — they are already in",
       "the request. Only ask a brief clarifying question if the request is truly",
@@ -183,7 +183,7 @@ export async function POST(req: Request) {
             .array(z.string())
             .optional()
             .describe(
-              "Ingredients the user already has on hand (used to rank by overlap)",
+              "Ingredients the user already has on hand (fuzzy overlap ranking)",
             ),
           excludeIngredients: z
             .array(z.string())

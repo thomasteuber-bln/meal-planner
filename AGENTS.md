@@ -73,11 +73,33 @@ npx tsc --noEmit
 `searchRecipes()` in `lib/recipes.ts` orchestrates:
 
 1. **`lib/foodTermsEn.ts`** — translate German ingredient/search terms to English (dictionary + OpenAI fallback) before calling Spoonacular.
-2. **`lib/spoonacular.ts`** — `complexSearch` with diet/intolerance/time/budget filters; single-ingredient searches use `query` (not strict `includeIngredients`); retries with a softer query on empty results.
-3. **`lib/translateRecipe.ts`** — batch-translate recipe title, description, ingredients, and steps to German via OpenAI; cached by recipe id.
-4. **Local ranking** in `lib/recipes.ts` — overlap with `availableIngredients`, soft filters for meal type / time / nutrition / budget. **Do not hard-filter on inferred diet tags** — Spoonacular already applies diet; many API recipes omit `vegetarian`/`vegan` flags and would be dropped incorrectly.
+2. **`lib/spoonacular.ts`** — lightweight candidate fetch, then bulk enrich for top results only:
+   - One `complexSearch` with a **combined query** (pantry items + free-text query joined).
+   - Optional **no-query retry** if the combined search returns nothing (diet/exclude filters only).
+   - **Hard API filters:** diet, intolerances, `excludeIngredients` only.
+   - **Soft filters** (time, budget, meal type, nutrition) are **not** sent to Spoonacular — applied locally in ranking.
+   - Pool search uses `addRecipeInformation: true` but **not** `fillIngredients`, instructions, or nutrition (cheaper).
+   - After ranking, top 3–5 recipes are enriched via **`/recipes/informationBulk`** (one call, not per recipe).
+   - Responses log `[spoonacular] quota used today: X, left: Y` from `X-API-Quota-*` headers.
+3. **Local ranking** in `lib/recipes.ts` — on the lightweight pool, before translation:
+   - Fuzzy overlap with `availableIngredients` (token/substring/plural match, not exact).
+   - Pantry terms expanded with English equivalents for cross-language matching.
+   - Sort by **fewest missing ingredients**, then overlap ratio, then soft-filter score.
+   - Soft filters for meal type / time / nutrition / budget (prefer matches, do not hard-drop the pool unless ≥3 strict matches exist).
+   - **Do not hard-filter on inferred diet tags** — Spoonacular already applies diet; many API recipes omit `vegetarian`/`vegan` flags and would be dropped incorrectly.
+4. **`lib/translateRecipe.ts`** — batch-translate **top results only** to German via OpenAI; cached by recipe id.
+   - Search results use `{ skipSteps: true }` (title, description, ingredients only — cards do not show steps).
+   - Recipe detail (`getRecipeById`) performs full translation including steps on first open.
 
 Logs: `[spoonacular]`, `[search]`, `[translate]`, `[foodTerms]`.
+
+### Spoonacular quota (free tier)
+
+- **50 points/day**, resets midnight UTC. See [Spoonacular pricing](https://spoonacular.com/food-api/pricing).
+- Typical **search** ≈ **4 points**: ~1.3 for pool `complexSearch` (8 results) + ~3 for `informationBulk` (5 recipes).
+- Worst case (empty query + retry) ≈ **5 points** per search.
+- **Recipe detail** ≈ **1 point** per `GET /recipes/{id}/information`.
+- Avoid redundant searches while developing; reuse cached recipes within a dev session when possible.
 
 ## Agent API
 
@@ -130,6 +152,7 @@ All tools are defined in `app/api/chat/route.ts`. Names use **snake_case**.
 - **Input (all optional):** `query`, `dietaryFilters`, `mealType`, `maxPrepTime`, `nutrition`, `budget`, `availableIngredients`, `excludeIngredients`, `maxResults` (3–5)
 - **Output:** `{ count, recipes }` or `{ count: 0, recipes: [], error }` — `recipes` is an array of `Recipe` objects from `lib/recipes.ts`
 - **Implementation:** `lib/recipes.ts` → `searchRecipes()` (see pipeline above)
+- **Ranking:** fuzzy pantry overlap; fewest missing ingredients wins. `availableIngredients` are soft hints, not strict Spoonacular `includeIngredients`.
 - **Logs:** `[tool] search_recipes called with:`, returned titles or error
 
 German ingredient names in `availableIngredients` or `query` are supported; translation to English for Spoonacular is automatic.
@@ -240,7 +263,7 @@ Restart the dev server after changing env vars. Run only **one** `npm run dev` i
 1. Create a free account at [spoonacular.com/food-api/console](https://spoonacular.com/food-api/console).
 2. Copy the API key from the dashboard.
 3. Add `SPOONACULAR_API_KEY=...` to `.env.local` (never commit this file).
-4. Free tier: ~150 API points/day — each search uses several points depending on result count.
+4. Free tier: **50 points/day** (resets midnight UTC). See **Spoonacular quota** under Recipe search pipeline above.
 
 ### Dev troubleshooting
 
