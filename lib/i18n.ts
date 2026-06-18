@@ -1,9 +1,10 @@
 import type {
-  DietaryTag,
-  Lang,
-  MealType,
-  NutritionTag,
-} from "@/lib/recipes";
+  AllergyTag,
+  CuisinePreference,
+  DietStyle,
+  NutritionGoal,
+} from "@/lib/profileOptions";
+import type { DietaryTag, Lang, MealType, NutritionTag } from "@/lib/recipes";
 
 export type { Lang };
 
@@ -21,17 +22,28 @@ const en = {
   onboardSubtitle:
     "Tell us a bit about you. We'll remember this for every recommendation.",
   dietLabel: "Dietary preferences",
-  dietHint: "Pick any that apply, or none.",
-  dislikesLabel: "Dislikes / allergies",
-  dislikesPlaceholder: "e.g. cilantro, olives, shellfish",
-  dislikesHint: "Comma-separated ingredients to avoid.",
+  dietHint: "How do you usually eat? Pick one, or none.",
+  allergiesLabel: "Allergies & intolerances",
+  allergiesHint: "We'll filter recipes that avoid these.",
+  dislikesLabel: "Other foods to avoid",
+  dislikesPlaceholder: "e.g. cilantro, olives, mushrooms",
+  dislikesHint: "Comma-separated ingredients you dislike.",
+  cuisineLabel: "Cuisine & lifestyle",
+  cuisineHint: "Flavors and eating styles for this meal.",
+  nutritionGoalLabel: "Nutrition goals",
+  nutritionGoalHint: "Pick a goal to see target macro percentages (AMDR-based).",
+  macroCarbs: "Carbs",
+  macroProtein: "Protein",
+  macroFat: "Fat",
+  macroPercentOfCalories: "% of calories",
   householdLabel: "Household size",
   householdHint: "How many people are you cooking for?",
   save: "Save & continue",
   saving: "Saving…",
 
   requestTitle: "What are you in the mood for?",
-  requestSubtitle: "We'll match recipes to your saved diet and dislikes.",
+  requestSubtitle:
+    "We'll match recipes to your saved profile and preferences.",
   editPreferences: "Edit preferences",
   mealLabel: "Type of meal",
   prepLabel: "Preparation time",
@@ -51,6 +63,8 @@ const en = {
   identifiedIngredientsHeading: "Ingredients from photo",
   nutritionLabel: "Nutritional goals",
   budgetLabel: "Budget",
+  budgetHint: "Optional — prefer cheaper or premium recipes.",
+  budgetAny: "Any",
   submit: "Get recommendations",
   submitting: "Finding recipes…",
 
@@ -88,10 +102,20 @@ const de: typeof en = {
   onboardSubtitle:
     "Erzähl uns kurz von dir. Wir merken uns das für jede Empfehlung.",
   dietLabel: "Ernährungsweise",
-  dietHint: "Wähle, was zutrifft – oder nichts.",
-  dislikesLabel: "Abneigungen / Allergien",
-  dislikesPlaceholder: "z. B. Koriander, Oliven, Meeresfrüchte",
-  dislikesHint: "Zutaten zum Vermeiden, durch Komma getrennt.",
+  dietHint: "Wie isst du normalerweise? Wähle eine Option oder keine.",
+  allergiesLabel: "Allergien & Unverträglichkeiten",
+  allergiesHint: "Wir filtern Rezepte, die diese vermeiden.",
+  dislikesLabel: "Weitere Lebensmittel zum Vermeiden",
+  dislikesPlaceholder: "z. B. Koriander, Oliven, Pilze",
+  dislikesHint: "Unerwünschte Zutaten, durch Komma getrennt.",
+  cuisineLabel: "Küche & Lebensstil",
+  cuisineHint: "Geschmacksrichtungen und Essensstile für diese Mahlzeit.",
+  nutritionGoalLabel: "Ernährungsziele",
+  nutritionGoalHint: "Wähle ein Ziel, um Ziel-Makro-Prozente zu sehen (AMDR-basiert).",
+  macroCarbs: "Kohlenhydrate",
+  macroProtein: "Protein",
+  macroFat: "Fett",
+  macroPercentOfCalories: "% der Kalorien",
   householdLabel: "Haushaltsgröße",
   householdHint: "Für wie viele Personen kochst du?",
   save: "Speichern & weiter",
@@ -99,7 +123,7 @@ const de: typeof en = {
 
   requestTitle: "Worauf hast du Lust?",
   requestSubtitle:
-    "Wir gleichen Rezepte mit deiner gespeicherten Ernährung und Abneigungen ab.",
+    "Wir gleichen Rezepte mit deinem gespeicherten Profil und deinen Vorlieben ab.",
   editPreferences: "Einstellungen bearbeiten",
   mealLabel: "Art der Mahlzeit",
   prepLabel: "Zubereitungszeit",
@@ -120,6 +144,8 @@ const de: typeof en = {
   identifiedIngredientsHeading: "Zutaten aus Foto",
   nutritionLabel: "Ernährungsziele",
   budgetLabel: "Budget",
+  budgetHint: "Optional — bevorzugt günstigere oder Premium-Rezepte.",
+  budgetAny: "Egal",
   submit: "Empfehlungen anzeigen",
   submitting: "Suche Rezepte…",
 
@@ -152,6 +178,84 @@ export type TranslationKey = keyof typeof en;
 export function getT(lang: Lang) {
   return (key: TranslationKey): string => translations[lang][key];
 }
+
+export const DIET_STYLE_LABELS: Record<Lang, Record<DietStyle, string>> = {
+  en: {
+    vegetarian: "Vegetarian",
+    vegan: "Vegan",
+    pescetarian: "Pescetarian",
+    flexitarian: "Flexitarian",
+    carnivore: "Carnivore",
+  },
+  de: {
+    vegetarian: "Vegetarisch",
+    vegan: "Vegan",
+    pescetarian: "Pescetarisch",
+    flexitarian: "Flexitarisch",
+    carnivore: "Carnivor",
+  },
+};
+
+export const ALLERGY_LABELS: Record<Lang, Record<AllergyTag, string>> = {
+  en: {
+    "gluten-free": "Gluten-free",
+    "lactose-free": "Lactose-free",
+    "nut-free": "Nut-free",
+    "shellfish-free": "Shellfish-free",
+    "egg-free": "Egg-free",
+    "soy-free": "Soy-free",
+  },
+  de: {
+    "gluten-free": "Glutenfrei",
+    "lactose-free": "Laktosefrei",
+    "nut-free": "Nussfrei",
+    "shellfish-free": "Schalentiere-frei",
+    "egg-free": "Eifrei",
+    "soy-free": "Sojafrei",
+  },
+};
+
+export const CUISINE_LABELS: Record<Lang, Record<CuisinePreference, string>> = {
+  en: {
+    mediterranean: "Mediterranean",
+    asian: "Asian",
+    keto: "Keto",
+    paleo: "Paleo",
+    mexican: "Mexican",
+    italian: "Italian",
+    indian: "Indian",
+    "comfort-food": "Comfort food",
+  },
+  de: {
+    mediterranean: "Mediterran",
+    asian: "Asiatisch",
+    keto: "Keto",
+    paleo: "Paleo",
+    mexican: "Mexikanisch",
+    italian: "Italienisch",
+    indian: "Indisch",
+    "comfort-food": "Comfort Food",
+  },
+};
+
+export const NUTRITION_GOAL_LABELS: Record<Lang, Record<NutritionGoal, string>> = {
+  en: {
+    balanced: "Balanced",
+    "low-carb": "Low-carb",
+    "high-protein": "High-protein",
+    "high-fiber": "High-fiber",
+    "low-calorie": "Low-calorie",
+    "low-fat": "Low-fat",
+  },
+  de: {
+    balanced: "Ausgewogen",
+    "low-carb": "Kohlenhydratarm",
+    "high-protein": "Proteinreich",
+    "high-fiber": "Ballaststoffreich",
+    "low-calorie": "Kalorienarm",
+    "low-fat": "Fettarm",
+  },
+};
 
 export const DIET_LABELS: Record<Lang, Record<DietaryTag, string>> = {
   en: {

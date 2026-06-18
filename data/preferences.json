@@ -2,7 +2,9 @@
   "diet": [
     "vegetarian"
   ],
+  "allergies": [],
   "dislikes": [],
+  "nutritionGoal": "balanced",
   "budget": null,
   "householdSize": 1,
   "maxCookTime": null,

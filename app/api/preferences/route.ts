@@ -10,7 +10,11 @@ export async function POST(req: Request) {
 
   const update: Record<string, unknown> = {};
   if (Array.isArray(body.diet)) update.diet = body.diet;
+  if (Array.isArray(body.allergies)) update.allergies = body.allergies;
   if (Array.isArray(body.dislikes)) update.dislikes = body.dislikes;
+  if (typeof body.nutritionGoal === "string" || body.nutritionGoal === null) {
+    update.nutritionGoal = body.nutritionGoal;
+  }
   if (typeof body.householdSize === "number") {
     update.householdSize = body.householdSize;
   }

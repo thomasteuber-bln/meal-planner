@@ -28,27 +28,29 @@ import {
 } from "@/lib/clientSession";
 import type { UIMessage } from "ai";
 
+import type { Preferences } from "@/lib/preferences";
+import { cuisineToQueryHints } from "@/lib/profileOptions";
+
 type Phase = "loading" | "onboarding" | "request" | "results";
 
-interface Preferences {
-  diet: string[] | null;
-  dislikes: string[] | null;
-  householdSize: number | null;
-  onboarded: boolean;
-}
-
 function buildRequestMessage(v: RecipeRequestValues): string {
+  const cuisineHints = cuisineToQueryHints(v.cuisinePreferences);
   const parts = [
     `Please recommend recipes for ${v.mealType}.`,
+    v.cuisinePreferences.length
+      ? `Cuisine & lifestyle preferences: ${v.cuisinePreferences.join(", ")}.`
+      : null,
+    cuisineHints.length
+      ? `Search query hints for cuisine: ${cuisineHints.join(", ")}.`
+      : null,
     v.maxPrepTime
       ? `Maximum preparation time: ${v.maxPrepTime} minutes.`
       : "Preparation time: no limit.",
     v.availableIngredients.length
       ? `Available ingredients: ${v.availableIngredients.join(", ")}.`
       : null,
-    v.nutrition.length ? `Nutritional goals: ${v.nutrition.join(", ")}.` : null,
-    `Budget: ${v.budget}.`,
-    "Apply my saved diet and dislikes from my preferences.",
+    v.budget ? `Budget: ${v.budget}.` : null,
+    "Apply my saved profile (diet, allergies, nutrition goal, and dislikes).",
   ].filter(Boolean);
   return parts.join(" ");
 }
@@ -245,9 +247,11 @@ export default function Page() {
           <p className="app__sub">
             {[
               prefs.diet?.length ? prefs.diet.join(", ") : t("noDietLimits"),
+              prefs.allergies?.length ? prefs.allergies.join(", ") : null,
               prefs.dislikes?.length
                 ? `${t("avoiding")} ${prefs.dislikes.join(", ")}`
                 : null,
+              prefs.nutritionGoal ?? null,
               prefs.householdSize
                 ? `${t("forPeople")} ${prefs.householdSize}`
                 : null,
@@ -265,7 +269,9 @@ export default function Page() {
           lang={lang}
           initial={{
             diet: prefs?.diet ?? [],
+            allergies: prefs?.allergies ?? [],
             dislikes: prefs?.dislikes ?? [],
+            nutritionGoal: prefs?.nutritionGoal ?? null,
             householdSize: prefs?.householdSize ?? 2,
           }}
           saving={saving}

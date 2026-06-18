@@ -15,6 +15,7 @@ import {
   type NutritionTag,
 } from "@/lib/recipes";
 import { readPreferences, writePreferences } from "@/lib/preferences";
+import { preferencesToSearchHints } from "@/lib/profileOptions";
 import { generateShoppingList } from "@/lib/shoppingList";
 import { identifyIngredientsFromImage } from "@/lib/identifyIngredientsFromImage";
 import {
@@ -83,20 +84,22 @@ export async function POST(req: Request) {
     system: [
       "You are a helpful recipe assistant for a guided meal-planner app.",
       `Always write your replies to the user in ${langName}.`,
-      "The user has completed onboarding (diet, dislikes, household size) and",
-      "submits a structured request that already includes the meal type,",
-      "preparation time, available ingredients, nutrition goals, and budget.",
-      "First call get_preferences to load their saved diet and dislikes.",
-      "Then call search_recipes: map the saved diet to `dietaryFilters`, saved",
-      "dislikes to `excludeIngredients`, and the request details to the matching",
-      "arguments (mealType, maxPrepTime, availableIngredients, nutrition, budget).",
+      "The user has completed onboarding (diet, allergies, nutrition goal,",
+      "dislikes, household size) and submits a structured request that already",
+      "includes the meal type, cuisine & lifestyle preferences, preparation time,",
+      "available ingredients, and budget.",
+      "First call get_preferences to load their saved profile and `searchHints`.",
+      "Then call search_recipes: merge `searchHints` (dietaryFilters, nutrition,",
+      "query hints, excludeIngredients) with the request details (mealType,",
+      "maxPrepTime, availableIngredients, budget). Append cuisine preferences from",
+      "the request to the search `query` when helpful.",
       "Recipes are ranked by fewest missing ingredients (best pantry overlap).",
       "German ingredient names in the request are supported — they are translated for the recipe API automatically.",
-      "Do NOT ask the user to re-enter budget or cook time — they are already in",
-      "the request. Only ask a brief clarifying question if the request is truly",
-      "missing the meal type. Never invent dietary values.",
-      "If the user asks to change a saved preference (diet or dislikes), call",
-      "set_preferences to persist it, then continue.",
+      "Do NOT ask the user to re-enter cook time — it is already in the request.",
+      "Budget is optional; omit it from search_recipes when the user chose no limit.",
+      "Only ask a brief clarifying question if the request is truly missing the meal type.",
+      "If the user asks to change a saved preference (diet, allergies,",
+      "nutrition goal, or dislikes), call set_preferences to persist it, then continue.",
       "If the user asks for a shopping list for a recipe, call generate_shopping_list",
       "with the recipeId and their availableIngredients (from the request or message).",
       "If the user attaches a photo of their fridge, pantry, or storage and wants",
@@ -118,22 +121,24 @@ export async function POST(req: Request) {
     tools: {
       get_preferences: tool({
         description:
-          "Load the user's saved meal preferences (diet, dislikes, budget, " +
-          "household size, max cook time) from local storage. The result " +
-          "includes a `missing` array listing any preferences that are not set " +
-          "yet; ask the user about those before recommending meals.",
+          "Load the user's saved meal preferences (diet, allergies, nutrition goal, " +
+          "dislikes, budget, household size, max cook time) from local storage. " +
+          "Includes `searchHints` for mapping profile fields to " +
+          "search_recipes filters. The `missing` array lists unset optional prefs.",
         inputSchema: z.object({}),
         execute: async () => {
           const { preferences, missing } = await readPreferences();
+          const searchHints = preferencesToSearchHints(preferences);
 
           console.log("\n[tool] get_preferences called");
           console.log("[tool] get_preferences preferences:", preferences);
+          console.log("[tool] get_preferences searchHints:", searchHints);
           console.log(
             "[tool] get_preferences missing:",
             missing.length ? missing : "(none)",
           );
 
-          return { preferences, missing };
+          return { preferences, missing, searchHints };
         },
       }),
       set_preferences: tool({
@@ -146,11 +151,24 @@ export async function POST(req: Request) {
           diet: z
             .array(z.string())
             .optional()
-            .describe("Dietary preferences, e.g. ['vegetarian']"),
+            .describe("Lifestyle diet, e.g. ['vegetarian'] or ['pescetarian']"),
+          allergies: z
+            .array(z.string())
+            .optional()
+            .describe(
+              "Allergies/intolerances, e.g. ['gluten-free', 'lactose-free']",
+            ),
           dislikes: z
             .array(z.string())
             .optional()
             .describe("Ingredients to avoid, e.g. ['cilantro']"),
+          nutritionGoal: z
+            .string()
+            .nullable()
+            .optional()
+            .describe(
+              "Nutrition goal: balanced, low-carb, high-protein, high-fiber, low-calorie, or low-fat",
+            ),
           budget: z
             .string()
             .optional()
