@@ -45,6 +45,8 @@ interface SpoonacularInstructionStep {
 interface SpoonacularRecipePayload {
   id: number;
   title: string;
+  image?: string;
+  spoonacularScore?: number;
   summary?: string;
   readyInMinutes?: number;
   servings?: number;
@@ -150,15 +152,61 @@ function formatIngredientLine(
   return `${amount} ${unit} ${name}`.trim();
 }
 
+function isSweetDishType(dishTypes: string[]): boolean {
+  const types = dishTypes.map((t) => t.toLowerCase());
+  if (types.some((t) => t.includes("breakfast"))) return false;
+  return types.some(
+    (t) =>
+      t.includes("dessert") ||
+      t.includes("sweet") ||
+      t.includes("candy") ||
+      t.includes("ice cream") ||
+      t === "snack" ||
+      t === "fingerfood" ||
+      t.includes("beverage") ||
+      t === "drink",
+  );
+}
+
 function inferMeals(dishTypes: string[] = []): MealType[] {
   const types = dishTypes.map((t) => t.toLowerCase());
+  if (isSweetDishType(types)) return [];
+
   const meals: MealType[] = [];
   if (types.some((t) => t.includes("breakfast"))) meals.push("breakfast");
   if (types.some((t) => t.includes("lunch"))) meals.push("lunch");
-  if (types.some((t) => t.includes("dinner") || t.includes("main"))) {
-    meals.push("dinner");
+  if (
+    types.some(
+      (t) =>
+        t.includes("dinner") ||
+        t.includes("main course") ||
+        t.includes("main dish"),
+    )
+  ) {
+    if (!meals.includes("lunch")) meals.push("lunch");
+    if (!meals.includes("dinner")) meals.push("dinner");
+  }
+  if (
+    types.some((t) =>
+      ["side dish", "salad", "soup", "antipasti", "antipasto"].some((s) =>
+        t.includes(s),
+      ),
+    )
+  ) {
+    if (types.some((t) => t.includes("salad") || t.includes("side dish"))) {
+      if (!meals.includes("lunch")) meals.push("lunch");
+      return meals.length ? meals : ["lunch"];
+    }
+    if (!meals.includes("lunch")) meals.push("lunch");
+    if (!meals.includes("dinner")) meals.push("dinner");
   }
   return meals.length ? meals : ["lunch", "dinner"];
+}
+
+function mealTypeToSpoonacularType(mealType?: MealType): string | undefined {
+  if (mealType === "breakfast") return "breakfast";
+  if (mealType === "lunch" || mealType === "dinner") return "main course";
+  return undefined;
 }
 
 function inferDietaryTags(data: SpoonacularRecipePayload): DietaryTag[] {
@@ -239,19 +287,35 @@ function mapSpoonacularRecipe(data: SpoonacularRecipePayload): Recipe {
     ),
   ];
 
+  let meals = inferMeals(data.dishTypes);
+  if (
+    /\b(yogurt|yoghurt|parfait|smoothie bowl|overnight oats|granola|oatmeal|porridge|cereal)\b/i.test(
+      title,
+    )
+  ) {
+    meals = ["breakfast"];
+  }
+
   return {
     id: String(data.id),
     title: { en: title, de: title },
     description: { en: description, de: description },
+    imageUrl: data.image?.trim() || null,
+    spoonacularScore:
+      typeof data.spoonacularScore === "number" &&
+      Number.isFinite(data.spoonacularScore)
+        ? data.spoonacularScore
+        : null,
     minutes: data.readyInMinutes ?? 30,
     servings: data.servings ?? 2,
-    meals: inferMeals(data.dishTypes),
+    meals,
     tags: inferDietaryTags(data),
     nutrition: inferNutritionTags(data),
     cost: inferCost(data.pricePerServing),
     ingredients,
     steps: mapSteps(data),
     searchTerms: [...new Set(searchTerms.filter(Boolean))],
+    dishTypes: (data.dishTypes ?? []).map((t) => t.toLowerCase()),
   };
 }
 
@@ -292,8 +356,10 @@ function buildPoolSearchParams(args: {
   dietaryFilters: DietaryTag[];
   excludeEn: string[];
   fetchCount: number;
+  mealType?: MealType;
 }) {
   const dietParams = buildDietParams(args.dietaryFilters);
+  const type = mealTypeToSpoonacularType(args.mealType);
   return {
     number: args.fetchCount,
     addRecipeInformation: true,
@@ -302,6 +368,7 @@ function buildPoolSearchParams(args: {
     instructionsRequired: false,
     fillIngredients: false,
     sort: "popularity" as const,
+    type,
     excludeIngredients: args.excludeEn.length ? args.excludeEn.join(",") : undefined,
     ...dietParams,
   };
@@ -335,15 +402,34 @@ async function fetchRecipePool(
   poolParams: ReturnType<typeof buildPoolSearchParams>,
   query: string,
 ): Promise<Recipe[]> {
-  if (query.trim()) {
-    const data = await complexSearch({ ...poolParams, query: query.trim() });
-    const recipes = mapSearchResults(data);
+  const runSearch = async (
+    params: ReturnType<typeof buildPoolSearchParams>,
+    q: string,
+  ) => {
+    if (q.trim()) {
+      const data = await complexSearch({ ...params, query: q.trim() });
+      return mapSearchResults(data);
+    }
+    const data = await complexSearch(params);
+    return mapSearchResults(data);
+  };
+
+  const searchQuery = query.trim();
+  let recipes = await runSearch(poolParams, searchQuery);
+  if (recipes.length > 0) return recipes;
+
+  if (poolParams.type && searchQuery) {
+    console.log("[spoonacular] retrying without course type filter");
+    recipes = await runSearch({ ...poolParams, type: undefined }, searchQuery);
     if (recipes.length > 0) return recipes;
   }
 
-  console.log("[spoonacular] retrying with no query (diet/exclude only)");
-  const data = await complexSearch(poolParams);
-  return mapSearchResults(data);
+  if (searchQuery) {
+    console.log("[spoonacular] retrying with no query (diet/exclude only)");
+    return runSearch(poolParams, "");
+  }
+
+  return recipes;
 }
 
 export interface PreparedSearchTerms {
@@ -359,11 +445,12 @@ export async function fetchSpoonacularRecipes(
   const {
     dietaryFilters = [],
     availableIngredients = [],
+    mealType,
     maxResults = 5,
   } = args;
 
   const hasPantry = availableIngredients.length > 0;
-  const fetchCount = hasPantry ? 8 : Math.min(Math.max(maxResults * 2, 6), 8);
+  const fetchCount = hasPantry ? 12 : Math.min(Math.max(maxResults * 3, 12), 15);
 
   const { availableEn, excludeEn, queryEn } = terms;
 
@@ -371,11 +458,17 @@ export async function fetchSpoonacularRecipes(
     dietaryFilters,
     excludeEn,
     fetchCount,
+    mealType,
   });
 
-  const searchQuery = hasPantry
-    ? [...availableEn, queryEn].filter(Boolean).join(" ")
-    : queryEn;
+  const searchQuery = (() => {
+    const parts = hasPantry
+      ? [...availableEn, queryEn].filter(Boolean)
+      : [queryEn].filter(Boolean);
+    if (parts.length === 0 && mealType === "dinner") parts.push("dinner entree");
+    if (parts.length === 0 && mealType === "lunch") parts.push("lunch main");
+    return parts.join(" ");
+  })();
 
   const recipes = await fetchRecipePool(poolParams, searchQuery);
 

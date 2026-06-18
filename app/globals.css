@@ -354,7 +354,7 @@ body {
 /* Recipe cards */
 .recipe-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 12px;
 }
 
@@ -367,6 +367,11 @@ body {
   border-radius: 14px;
   background: var(--panel);
   transition: border-color 0.15s ease;
+  overflow: hidden;
+}
+
+.recipe--with-image {
+  padding-top: 0;
 }
 
 .recipe:has(.recipe__link:hover) {
@@ -376,10 +381,30 @@ body {
 .recipe__link {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 0;
   color: inherit;
   text-decoration: none;
   cursor: pointer;
+}
+
+.recipe__media {
+  margin: 0 -16px;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.recipe__media img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.recipe__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .recipe__cta {
@@ -388,25 +413,26 @@ body {
   color: var(--accent-2);
 }
 
-.recipe__head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 8px;
-}
-
 .recipe__title {
   margin: 0;
   font-size: 1.02rem;
   line-height: 1.25;
 }
 
-.recipe__time {
-  flex-shrink: 0;
+.recipe__subheader {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.recipe__score {
+  margin: 0;
   font-size: 0.78rem;
   font-weight: 600;
   color: var(--accent-2);
-  white-space: nowrap;
 }
 
 .recipe__desc {
@@ -513,6 +539,54 @@ body {
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--panel);
+  overflow: hidden;
+}
+
+.recipe-detail--with-image {
+  padding-top: 0;
+}
+
+.recipe-detail__media {
+  margin: 0 -20px;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.recipe-detail__media img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.recipe-detail__body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.recipe-detail__shopping {
+  width: 100%;
+}
+
+.recipe-detail__footer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.recipe-detail__error {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #f87171;
+}
+
+.recipe-detail--with-image .recipe-detail__back {
+  padding-top: 20px;
 }
 
 .recipe-detail__back {

@@ -45,6 +45,7 @@ npx tsc --noEmit
                      │ GET/POST /api/preferences  (CRUD)
                      │ POST /api/identify-ingredients  (photo scan)
                      │ GET /api/recipes/[id]  (recipe detail)
+                     │ POST /api/shopping-list  (missing ingredients)
                      ▼
 ┌─────────────────────────────────────────────────────────┐
 │  Agent route (thin orchestration)                       │
@@ -77,19 +78,26 @@ npx tsc --noEmit
 1. **`lib/foodTermsEn.ts`** — translate German ingredient/search terms to English (dictionary + OpenAI fallback) before calling Spoonacular.
 2. **`lib/spoonacular.ts`** — lightweight candidate fetch, then bulk enrich for top results only:
    - One `complexSearch` with a **combined query** (pantry items + free-text query joined).
-   - Optional **no-query retry** if the combined search returns nothing (diet/exclude filters only).
-   - **Hard API filters:** diet, intolerances, `excludeIngredients` only.
-   - **Soft filters** (time, budget, meal type, nutrition) are **not** sent to Spoonacular — applied locally in ranking.
+   - Default query hints when empty: `dinner entree` (dinner), `lunch main` (lunch).
+   - **Hard API filters:** diet, intolerances, `excludeIngredients`, and **`type`** (`main course` for lunch/dinner, `breakfast` for breakfast).
+   - Retries: without `type` if typed search returns nothing; then without query (diet/exclude only).
+   - **Soft filters** (time, budget, nutrition) are **not** sent to Spoonacular — applied locally in ranking.
+   - Pool size: **12–15** candidates (12 when pantry overlap matters).
    - Pool search uses `addRecipeInformation: true` but **not** `fillIngredients`, instructions, or nutrition (cheaper).
+   - Maps `image`, `spoonacularScore`, and `dishTypes` onto each `Recipe`.
    - After ranking, top 3–5 recipes are enriched via **`/recipes/informationBulk`** (one call, not per recipe).
    - Responses log `[spoonacular] quota used today: X, left: Y` from `X-API-Quota-*` headers.
 3. **Local ranking** in `lib/recipes.ts` — deterministic TypeScript, **not** LLM-based — on the lightweight pool, before translation:
+   - **Sweet/dessert exclusion** for lunch/dinner via `isSweetRecipe()` (`dishTypes` + title heuristics).
+   - **Meal suitability** via `recipeMatchesMeal()` — dinner excludes salads/sides/yogurt-style items; salads map to lunch only in `inferMeals()`.
+   - **Heft tier** via `mealHeftTier()` — mains (3) > soup (2) > salad at lunch (1) > light meals (0). Sort lunch/dinner by tier before pantry overlap.
+   - Dinner ranking pool excludes tier-0 light meals; lunch keeps salads but ranks them lower.
    - Fuzzy overlap with `availableIngredients` (token/substring/plural match, not exact).
    - Pantry terms expanded with English equivalents for cross-language matching.
    - Sort by **fewest missing ingredients**, then overlap ratio, then soft-filter score.
-   - Soft filters for meal type / time / nutrition / budget (prefer matches, do not hard-drop the pool unless ≥3 strict matches exist).
+   - Soft filters for time / nutrition / budget (prefer matches; hard-drop only when **≥3** strict matches exist). Prep time is always a soft preference when the strict pool is small — still return 3–5 results.
    - **Do not hard-filter on inferred diet tags** — Spoonacular already applies diet; many API recipes omit `vegetarian`/`vegan` flags and would be dropped incorrectly.
-   - **Meal type** is inferred from Spoonacular `dishTypes` in `lib/spoonacular.ts` (`inferMeals`); untagged recipes default to `["lunch", "dinner"]`, so lunch vs dinner often has little effect. Breakfast is the strongest filter.
+   - **Meal type** is inferred from Spoonacular `dishTypes` in `lib/spoonacular.ts` (`inferMeals`); desserts/snacks get no meal tags; untagged savory recipes default to `["lunch", "dinner"]`. Yogurt/parfait-style titles map to breakfast only.
    - **Budget** is inferred from Spoonacular `pricePerServing` (cents USD): `<250` → `low`, `<600` → `medium`, else `high`; missing price defaults to `medium`. Budget is **not** sent to Spoonacular — only used in local ranking. Optional per request (`null` = no preference).
 4. **`lib/translateRecipe.ts`** — batch-translate **top results only** to German via OpenAI; cached by recipe id.
    - Search results use `{ skipSteps: true }` (title, description, ingredients only — cards do not show steps).
@@ -127,7 +135,7 @@ Nutrition goal macro targets (percent of daily calories, AMDR-informed):
 ### Spoonacular quota (free tier)
 
 - **50 points/day**, resets midnight UTC. See [Spoonacular pricing](https://spoonacular.com/food-api/pricing).
-- Typical **search** ≈ **4 points**: ~1.3 for pool `complexSearch` (8 results) + ~3 for `informationBulk` (5 recipes).
+- Typical **search** ≈ **4 points**: ~1.3 for pool `complexSearch` (12–15 results) + ~3 for `informationBulk` (5 recipes).
 - Worst case (empty query + retry) ≈ **5 points** per search.
 - **Recipe detail** ≈ **1 point** per `GET /recipes/{id}/information`.
 - Avoid redundant searches while developing; reuse cached recipes within a dev session when possible.
@@ -141,6 +149,7 @@ Nutrition goal macro targets (percent of daily calories, AMDR-informed):
 | `POST /api/preferences` | `app/api/preferences/route.ts` | Write preferences (UI onboarding) |
 | `GET /api/recipes/[id]` | `app/api/recipes/[id]/route.ts` | Fetch one recipe by Spoonacular id (for detail page) |
 | `POST /api/identify-ingredients` | `app/api/identify-ingredients/route.ts` | Vision scan of fridge/pantry photo → ingredient list |
+| `POST /api/shopping-list` | `app/api/shopping-list/route.ts` | Missing-ingredient list for a recipe (detail page) |
 
 ### `POST /api/chat`
 
@@ -174,6 +183,20 @@ Nutrition goal macro targets (percent of daily calories, AMDR-informed):
 ```
 
 **Response:** `{ count, ingredients }` or `{ error }` (HTTP 400). Uses the same `identifyIngredientsFromImage()` lib as the agent tool. Accepts JPEG, PNG, WebP, GIF up to ~4 MB. `maxDuration = 30` seconds.
+
+### `POST /api/shopping-list`
+
+**Request body:**
+
+```json
+{
+  "recipeId": "12345",
+  "availableIngredients": ["rice", "broccoli"],
+  "recipe": { /* optional full Recipe — skips re-fetch on detail page */ }
+}
+```
+
+**Response:** `ShoppingListResult` (`recipeId`, `recipeTitle`, `missing`, `missingCount`, …) or `{ error }` (HTTP 404). Uses `lib/shoppingList.ts` → `generateShoppingList()` with household size from saved preferences. When `recipe` is sent and `recipe.id` matches `recipeId`, the server uses it directly (avoids a second Spoonacular/translate round-trip). `maxDuration = 30` seconds.
 
 ## Tools
 
@@ -215,7 +238,7 @@ German ingredient names in `availableIngredients` or `query` are supported; tran
 
 - **Input:** `recipeId`, `availableIngredients`
 - **Output:** `{ recipeId, recipeTitle, availableIngredients, missing, missingCount, overlapCount }` or `{ error }`
-- **Implementation:** `lib/shoppingList.ts` → `generateShoppingList()` (scales missing lines via `lib/scaleIngredients.ts` and household size from preferences)
+- **Implementation:** `lib/shoppingList.ts` → `generateShoppingList()` (scales missing lines via `lib/scaleIngredients.ts` and household size from preferences). Accepts optional `recipe` to skip `getRecipeById` when the client already loaded it.
 - **Logs:** `[tool] generate_shopping_list called with:`, missing count or error
 
 When adding a new tool:
@@ -233,9 +256,12 @@ app/
   api/preferences/route.ts
   api/recipes/[id]/route.ts # Single-recipe JSON for detail page
   api/identify-ingredients/route.ts # Fridge/pantry photo → ingredients
+  api/shopping-list/route.ts # Missing-ingredient list (detail page)
   components/               # UI only — no agent or domain logic
     OnboardingForm.tsx      # Profile: diet, allergies, dislikes, nutrition goal, household
     RecipeRequestForm.tsx   # Per search: meal, cuisine, prep time, ingredients, budget
+    RecipeCard.tsx            # Results card: image, subheader, tags, score, ingredients
+    RecipeDetail.tsx          # Full recipe: image, steps, shopping list button
     IngredientPhotoScan.tsx  # Fridge/pantry photo → ingredients field
     IdentifiedIngredientsCard.tsx # Renders tool-identify_ingredients_from_image output
   recipes/[id]/page.tsx     # Recipe detail route
@@ -299,12 +325,13 @@ The results view depends on this contract — preserve it when changing either s
 
 1. UI sends a structured natural-language request (built from `RecipeRequestForm` values: meal type, cuisine, prep time, ingredients, optional budget) plus `language` in the chat body. Saved profile fields (diet, allergies, nutrition goal, dislikes) are referenced in the message; agent loads them via `get_preferences`.
 2. Agent calls `get_preferences` (uses `searchHints`), then `search_recipes`, then streams a **short intro paragraph** (no per-recipe lists).
-3. UI reads `tool-search_recipes` parts with `state === "output-available"` and renders `output.recipes` via `RecipeCard`. Tool errors in `output.error` are shown inline.
-4. UI reads `tool-generate_shopping_list` parts and renders via `ShoppingListCard`. Recipe cards expose a shopping-list button that sends a follow-up chat message.
+3. UI reads `tool-search_recipes` parts with `state === "output-available"` and renders `output.recipes` via `RecipeCard` (title, image, one-line subheader, diet/nutrition tags, Spoonacular score, ingredients). Tool errors in `output.error` are shown inline.
+4. UI reads `tool-generate_shopping_list` parts and renders via `ShoppingListCard`. Recipe cards on the results page expose a shopping-list button that sends a follow-up chat message.
 5. UI reads `tool-identify_ingredients_from_image` parts and renders via `IdentifiedIngredientsCard`. The request form scans photos via `POST /api/identify-ingredients` (merges into the ingredients field).
-6. Clicking a recipe card navigates to `/recipes/[id]` (Spoonacular numeric id). `RecipeDetail` loads from session cache + `GET /api/recipes/[id]`.
+6. Clicking a recipe card navigates to `/recipes/[id]` (Spoonacular numeric id). `RecipeDetail` loads from session cache + `GET /api/recipes/[id]`; shows hero image when `imageUrl` is set.
 7. Results phase state (messages, available ingredients) is persisted in **sessionStorage** via `lib/clientSession.ts` so **Back to results** restores the results view after visiting a detail page.
-8. `RecipeCard` applies household-size scaling client-side from `prefs.householdSize`; the tool returns base recipe data.
+8. `RecipeDetail` shopping list: button at page bottom calls `POST /api/shopping-list` with the loaded `recipe` and session `availableIngredients`; renders `ShoppingListCard` inline below the button.
+9. `RecipeCard` and `RecipeDetail` apply household-size scaling client-side from `prefs.householdSize`; the tool returns base recipe data.
 
 A new frontend only needs to implement the same HTTP calls and parse the same tool output shape.
 

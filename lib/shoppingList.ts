@@ -33,8 +33,13 @@ export async function generateShoppingList(args: {
   recipeId: string;
   availableIngredients: string[];
   householdSize?: number | null;
+  /** When the client already loaded the recipe (detail page), skip another API fetch. */
+  recipe?: Recipe;
 }): Promise<ShoppingListResult | { error: string }> {
-  const recipe = await getRecipeById(args.recipeId);
+  const recipe =
+    args.recipe?.id === args.recipeId
+      ? args.recipe
+      : await getRecipeById(args.recipeId);
   if (!recipe) {
     return { error: `Recipe not found: ${args.recipeId}` };
   }
