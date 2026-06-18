@@ -1,9 +1,16 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { normalizeStoredPreferences } from "./profileOptions";
 
 export interface Preferences {
+  /** Lifestyle diet, e.g. vegetarian or pescetarian. */
   diet: string[] | null;
+  /** Intolerances and common allergies. */
+  allergies: string[] | null;
+  /** Free-text ingredients to avoid. */
   dislikes: string[] | null;
+  /** Saved macro-oriented nutrition goal. */
+  nutritionGoal: string | null;
   budget: string | null;
   householdSize: number | null;
   maxCookTime: number | null;
@@ -25,7 +32,9 @@ const PREFERENCES_PATH = path.join(process.cwd(), "data", "preferences.json");
 
 const EMPTY_PREFERENCES: Preferences = {
   diet: null,
+  allergies: null,
   dislikes: null,
+  nutritionGoal: null,
   budget: null,
   householdSize: null,
   maxCookTime: null,
@@ -51,7 +60,7 @@ export async function readPreferences(): Promise<ReadPreferencesResult> {
   try {
     const raw = await readFile(PREFERENCES_PATH, "utf8");
     const parsed = JSON.parse(raw) as Partial<Preferences>;
-    preferences = { ...EMPTY_PREFERENCES, ...parsed };
+    preferences = normalizeStoredPreferences(parsed);
   } catch (err) {
     // Missing or invalid file → treat every preference as unset.
     console.warn("[preferences] could not read preferences file:", err);

@@ -4,7 +4,7 @@ Guidance for AI coding agents working on this repository.
 
 ## Project overview
 
-A **meal planner** that recommends recipes via a guided UI and an LLM agent with tools. Users complete onboarding (diet, dislikes, household size), submit a structured recipe request, and receive streamed recommendations rendered as localized recipe cards.
+A **meal planner** that recommends recipes via a guided UI and an LLM agent with tools. Users complete onboarding (diet style, allergies, dislikes, nutrition goal, household size), submit a structured recipe request (meal type, cuisine, prep time, ingredients, optional budget), and receive streamed recommendations rendered as localized recipe cards.
 
 Recipe data comes from **Spoonacular** (English). German UI labels and recipe text are produced server-side via OpenAI.
 
@@ -58,7 +58,7 @@ npx tsc --noEmit
 │  Domain / agent logic (stable, UI-agnostic)             │
 │  lib/recipes.ts, lib/spoonacular.ts, lib/translateRecipe.ts, │
 │  lib/foodTermsEn.ts, lib/shoppingList.ts, lib/preferences.ts, │
-│  lib/identifyIngredientsFromImage.ts                         │
+│  lib/profileOptions.ts, lib/identifyIngredientsFromImage.ts   │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -83,17 +83,46 @@ npx tsc --noEmit
    - Pool search uses `addRecipeInformation: true` but **not** `fillIngredients`, instructions, or nutrition (cheaper).
    - After ranking, top 3–5 recipes are enriched via **`/recipes/informationBulk`** (one call, not per recipe).
    - Responses log `[spoonacular] quota used today: X, left: Y` from `X-API-Quota-*` headers.
-3. **Local ranking** in `lib/recipes.ts` — on the lightweight pool, before translation:
+3. **Local ranking** in `lib/recipes.ts` — deterministic TypeScript, **not** LLM-based — on the lightweight pool, before translation:
    - Fuzzy overlap with `availableIngredients` (token/substring/plural match, not exact).
    - Pantry terms expanded with English equivalents for cross-language matching.
    - Sort by **fewest missing ingredients**, then overlap ratio, then soft-filter score.
    - Soft filters for meal type / time / nutrition / budget (prefer matches, do not hard-drop the pool unless ≥3 strict matches exist).
    - **Do not hard-filter on inferred diet tags** — Spoonacular already applies diet; many API recipes omit `vegetarian`/`vegan` flags and would be dropped incorrectly.
+   - **Meal type** is inferred from Spoonacular `dishTypes` in `lib/spoonacular.ts` (`inferMeals`); untagged recipes default to `["lunch", "dinner"]`, so lunch vs dinner often has little effect. Breakfast is the strongest filter.
+   - **Budget** is inferred from Spoonacular `pricePerServing` (cents USD): `<250` → `low`, `<600` → `medium`, else `high`; missing price defaults to `medium`. Budget is **not** sent to Spoonacular — only used in local ranking. Optional per request (`null` = no preference).
 4. **`lib/translateRecipe.ts`** — batch-translate **top results only** to German via OpenAI; cached by recipe id.
    - Search results use `{ skipSteps: true }` (title, description, ingredients only — cards do not show steps).
    - Recipe detail (`getRecipeById`) performs full translation including steps on first open.
 
 Logs: `[spoonacular]`, `[search]`, `[translate]`, `[foodTerms]`, `[identify]`.
+
+### Profile options (`lib/profileOptions.ts`)
+
+Onboarding and search mapping share constants from `lib/profileOptions.ts`:
+
+| Field | Where set | Options |
+|-------|-----------|---------|
+| **Diet style** | Onboarding (profile) | `vegetarian`, `vegan`, `pescetarian`, `flexitarian`, `carnivore` (single-select) |
+| **Allergies** | Onboarding (profile) | `gluten-free`, `lactose-free`, `nut-free`, `shellfish-free`, `egg-free`, `soy-free` |
+| **Dislikes** | Onboarding (profile) | Free-text comma-separated ingredients |
+| **Nutrition goal** | Onboarding (profile) | `balanced`, `low-carb`, `high-protein`, `high-fiber`, `low-calorie`, `low-fat` — AMDR-based macro % targets shown in UI |
+| **Cuisine & lifestyle** | Recipe request (per search) | `mediterranean`, `asian`, `keto`, `paleo`, `mexican`, `italian`, `indian`, `comfort-food` |
+| **Budget** | Recipe request (optional) | `low`, `medium`, `high`, or none (`null` = any) |
+| **Household size** | Onboarding (profile) | Integer ≥ 1 |
+
+`preferencesToSearchHints(prefs)` maps saved profile → `dietaryFilters`, `nutrition`, `queryHints`, `excludeIngredients` for the agent. `cuisineToQueryHints(cuisines)` maps per-request cuisine picks to search query terms. Legacy `diet` arrays that mixed allergies (e.g. `gluten-free`) are split on read via `normalizeStoredPreferences()`.
+
+Nutrition goal macro targets (percent of daily calories, AMDR-informed):
+
+| Goal | Carbs | Protein | Fat |
+|------|-------|---------|-----|
+| balanced | 50% | 20% | 30% |
+| low-carb | 25% | 30% | 45% |
+| high-protein | 40% | 30% | 30% |
+| high-fiber | 55% | 20% | 25% |
+| low-calorie | 45% | 30% | 25% |
+| low-fat | 55% | 25% | 20% |
 
 ### Spoonacular quota (free tier)
 
@@ -153,23 +182,23 @@ All tools are defined in `app/api/chat/route.ts`. Names use **snake_case**.
 ### `get_preferences`
 
 - **Input:** none (`z.object({})`)
-- **Output:** `{ preferences, missing }`
-- **Implementation:** `lib/preferences.ts` → `readPreferences()`
-- **Logs:** `[tool] get_preferences called`, preferences, missing keys
+- **Output:** `{ preferences, missing, searchHints }`
+- **Implementation:** `lib/preferences.ts` → `readPreferences()`; `searchHints` from `lib/profileOptions.ts` → `preferencesToSearchHints()`
+- **Logs:** `[tool] get_preferences called`, preferences, searchHints, missing keys
 
 ### `set_preferences`
 
-- **Input (all optional):** `diet`, `dislikes`, `budget`, `householdSize`, `maxCookTime`
+- **Input (all optional):** `diet`, `allergies`, `dislikes`, `nutritionGoal`, `budget`, `householdSize`, `maxCookTime`
 - **Output:** `{ saved: true, preferences, missing }`
 - **Implementation:** `lib/preferences.ts` → `writePreferences(update)` (partial merge)
 - **Logs:** `[tool] set_preferences called with:`, saved result
 
 ### `search_recipes`
 
-- **Input (all optional):** `query`, `dietaryFilters`, `mealType`, `maxPrepTime`, `nutrition`, `budget`, `availableIngredients`, `excludeIngredients`, `maxResults` (3–5)
+- **Input (all optional):** `query`, `dietaryFilters`, `mealType`, `maxPrepTime`, `nutrition`, `budget` (`low` | `medium` | `high` — omit when user chose no limit), `availableIngredients`, `excludeIngredients`, `maxResults` (3–5)
 - **Output:** `{ count, recipes }` or `{ count: 0, recipes: [], error }` — `recipes` is an array of `Recipe` objects from `lib/recipes.ts`
-- **Implementation:** `lib/recipes.ts` → `searchRecipes()` (see pipeline above)
-- **Ranking:** fuzzy pantry overlap; fewest missing ingredients wins. `availableIngredients` are soft hints, not strict Spoonacular `includeIngredients`.
+- **Implementation:** `lib/recipes.ts` → `searchRecipes()` (see pipeline above). Agent merges `searchHints` from `get_preferences` with request args; appends cuisine query hints from the user message to `query` when helpful.
+- **Ranking:** deterministic in `rankRecipes()` — fuzzy pantry overlap; fewest missing ingredients wins. `availableIngredients` are soft hints, not strict Spoonacular `includeIngredients`. LLM does **not** rank or reorder recipes.
 - **Logs:** `[tool] search_recipes called with:`, returned titles or error
 
 German ingredient names in `availableIngredients` or `query` are supported; translation to English for Spoonacular is automatic.
@@ -205,6 +234,8 @@ app/
   api/recipes/[id]/route.ts # Single-recipe JSON for detail page
   api/identify-ingredients/route.ts # Fridge/pantry photo → ingredients
   components/               # UI only — no agent or domain logic
+    OnboardingForm.tsx      # Profile: diet, allergies, dislikes, nutrition goal, household
+    RecipeRequestForm.tsx   # Per search: meal, cuisine, prep time, ingredients, budget
     IngredientPhotoScan.tsx  # Fridge/pantry photo → ingredients field
     IdentifiedIngredientsCard.tsx # Renders tool-identify_ingredients_from_image output
   recipes/[id]/page.tsx     # Recipe detail route
@@ -220,6 +251,7 @@ lib/
   clientSession.ts          # sessionStorage helpers (results restore, recipe cache)
   shoppingList.ts           # Missing-ingredient shopping lists
   preferences.ts            # Read/write preferences.json
+  profileOptions.ts         # Onboarding option constants, macro targets, search hint mappers
   scaleIngredients.ts       # Metric amount scaling for household size
   identifyIngredientsFromImage.ts # OpenAI vision → pantry ingredients
   i18n.ts                   # EN/DE UI strings and label maps
@@ -265,8 +297,8 @@ lib/
 
 The results view depends on this contract — preserve it when changing either side:
 
-1. UI sends a structured natural-language request (built from `RecipeRequestForm` values) plus `language` in the chat body.
-2. Agent calls `get_preferences`, then `search_recipes`, then streams a **short intro paragraph** (no per-recipe lists).
+1. UI sends a structured natural-language request (built from `RecipeRequestForm` values: meal type, cuisine, prep time, ingredients, optional budget) plus `language` in the chat body. Saved profile fields (diet, allergies, nutrition goal, dislikes) are referenced in the message; agent loads them via `get_preferences`.
+2. Agent calls `get_preferences` (uses `searchHints`), then `search_recipes`, then streams a **short intro paragraph** (no per-recipe lists).
 3. UI reads `tool-search_recipes` parts with `state === "output-available"` and renders `output.recipes` via `RecipeCard`. Tool errors in `output.error` are shown inline.
 4. UI reads `tool-generate_shopping_list` parts and renders via `ShoppingListCard`. Recipe cards expose a shopping-list button that sends a follow-up chat message.
 5. UI reads `tool-identify_ingredients_from_image` parts and renders via `IdentifiedIngredientsCard`. The request form scans photos via `POST /api/identify-ingredients` (merges into the ingredients field).

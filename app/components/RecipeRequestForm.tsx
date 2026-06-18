@@ -1,24 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import type { Lang, MealType, NutritionTag } from "@/lib/recipes";
-import {
-  BUDGET_LABELS,
-  MEAL_LABELS,
-  NUTRITION_LABELS,
-  getT,
-} from "@/lib/i18n";
+import type { Lang, MealType } from "@/lib/recipes";
+import type { CuisinePreference } from "@/lib/profileOptions";
+import { CUISINE_OPTIONS } from "@/lib/profileOptions";
+import { BUDGET_LABELS, CUISINE_LABELS, MEAL_LABELS, getT } from "@/lib/i18n";
 import { IngredientPhotoScan } from "./IngredientPhotoScan";
 
 const MEAL_OPTIONS: MealType[] = ["breakfast", "lunch", "dinner"];
-
-const NUTRITION_OPTIONS: NutritionTag[] = [
-  "high-protein",
-  "high-fiber",
-  "low-carb",
-  "low-calorie",
-  "low-fat",
-];
 
 const BUDGET_OPTIONS = ["low", "medium", "high"] as const;
 
@@ -28,8 +17,8 @@ export interface RecipeRequestValues {
   mealType: MealType;
   maxPrepTime: number; // 0 = any
   availableIngredients: string[];
-  nutrition: string[];
-  budget: BudgetTier;
+  cuisinePreferences: string[];
+  budget: BudgetTier | null;
 }
 
 export function RecipeRequestForm({
@@ -47,8 +36,8 @@ export function RecipeRequestForm({
   const [mealType, setMealType] = useState<MealType>("dinner");
   const [maxPrepTime, setMaxPrepTime] = useState<number>(30);
   const [ingredients, setIngredients] = useState("");
-  const [nutrition, setNutrition] = useState<string[]>([]);
-  const [budget, setBudget] = useState<BudgetTier>("medium");
+  const [cuisinePreferences, setCuisinePreferences] = useState<string[]>([]);
+  const [budget, setBudget] = useState<BudgetTier | null>(null);
 
   const prepOptions = [
     { label: t("prepQuick"), value: 15 },
@@ -57,11 +46,19 @@ export function RecipeRequestForm({
     { label: t("prepAny"), value: 0 },
   ];
 
-  function toggleNutrition(value: string) {
-    setNutrition((prev) =>
-      prev.includes(value) ? prev.filter((n) => n !== value) : [...prev, value],
+  function toggleCuisine(value: CuisinePreference) {
+    setCuisinePreferences((prev) =>
+      prev.includes(value) ? prev.filter((c) => c !== value) : [...prev, value],
     );
   }
+
+  const budgetOptions: { label: string; value: BudgetTier | null }[] = [
+    { label: t("budgetAny"), value: null },
+    ...BUDGET_OPTIONS.map((option) => ({
+      label: BUDGET_LABELS[lang][option],
+      value: option,
+    })),
+  ];
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -72,7 +69,7 @@ export function RecipeRequestForm({
         .split(",")
         .map((i) => i.trim())
         .filter(Boolean),
-      nutrition,
+      cuisinePreferences,
       budget,
     });
   }
@@ -104,6 +101,24 @@ export function RecipeRequestForm({
             </button>
           ))}
         </div>
+      </fieldset>
+
+      <fieldset className="field">
+        <legend className="field__label">{t("cuisineLabel")}</legend>
+        <div className="chips">
+          {CUISINE_OPTIONS.map((option) => (
+            <button
+              type="button"
+              key={option}
+              className={`chip ${cuisinePreferences.includes(option) ? "chip--on" : ""}`}
+              onClick={() => toggleCuisine(option)}
+              aria-pressed={cuisinePreferences.includes(option)}
+            >
+              {CUISINE_LABELS[lang][option]}
+            </button>
+          ))}
+        </div>
+        <span className="field__hint">{t("cuisineHint")}</span>
       </fieldset>
 
       <fieldset className="field">
@@ -141,37 +156,21 @@ export function RecipeRequestForm({
       </label>
 
       <fieldset className="field">
-        <legend className="field__label">{t("nutritionLabel")}</legend>
-        <div className="chips">
-          {NUTRITION_OPTIONS.map((option) => (
-            <button
-              type="button"
-              key={option}
-              className={`chip ${nutrition.includes(option) ? "chip--on" : ""}`}
-              onClick={() => toggleNutrition(option)}
-              aria-pressed={nutrition.includes(option)}
-            >
-              {NUTRITION_LABELS[lang][option]}
-            </button>
-          ))}
-        </div>
-      </fieldset>
-
-      <fieldset className="field">
         <legend className="field__label">{t("budgetLabel")}</legend>
-        <div className="segmented">
-          {BUDGET_OPTIONS.map((option) => (
+        <div className="chips">
+          {budgetOptions.map((option) => (
             <button
               type="button"
-              key={option}
-              className={`segmented__item ${budget === option ? "segmented__item--on" : ""}`}
-              onClick={() => setBudget(option)}
-              aria-pressed={budget === option}
+              key={option.label}
+              className={`chip ${budget === option.value ? "chip--on" : ""}`}
+              onClick={() => setBudget(option.value)}
+              aria-pressed={budget === option.value}
             >
-              {BUDGET_LABELS[lang][option]}
+              {option.label}
             </button>
           ))}
         </div>
+        <span className="field__hint">{t("budgetHint")}</span>
       </fieldset>
 
       <button className="btn btn--primary" type="submit" disabled={busy}>
