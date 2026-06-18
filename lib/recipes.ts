@@ -43,6 +43,10 @@ export interface Recipe {
   id: string;
   title: Localized;
   description: Localized;
+  /** Spoonacular CDN image URL when the API provides one. */
+  imageUrl?: string | null;
+  /** Spoonacular quality/popularity score (0–100) when available. */
+  spoonacularScore?: number | null;
   minutes: number;
   servings: number;
   meals: MealType[];
@@ -55,6 +59,8 @@ export interface Recipe {
   steps: Localized[];
   /** Lowercase keywords (both languages) used for search/filtering. */
   searchTerms: string[];
+  /** Spoonacular dish type labels (e.g. "main course", "dessert"). */
+  dishTypes: string[];
 }
 
 const COST_ORDER: Record<CostTier, number> = { low: 1, medium: 2, high: 3 };
@@ -203,6 +209,130 @@ export function countMissingIngredients(
   ).length;
 }
 
+/** Dessert/snack/beverage — not suitable for lunch or dinner mains. */
+const SWEET_DISH_KEYWORDS = [
+  "dessert",
+  "sweet",
+  "candy",
+  "ice cream",
+  "frozen dessert",
+  "beverage",
+  "drink",
+  "cocktail",
+  "smoothie",
+  "shake",
+];
+
+const SAVORY_DISH_KEYWORDS = [
+  "main course",
+  "main dish",
+  "dinner",
+  "lunch",
+  "side dish",
+  "salad",
+  "soup",
+  "antipasti",
+  "antipasto",
+  "brunch",
+  "entree",
+  "entrée",
+];
+
+const DESSERT_TITLE_RE =
+  /\b(ice cream|cookies?|brownies?|cupcakes?|cheesecake|key lime pie|lime pie|lemon pie|apple pie|cherry pie|pumpkin pie|chocolate cake|layer cake|fudge|candy|sorbet|gelato|macarons?|doughnuts?|donuts?|meringue)\b/i;
+
+const LIGHT_MEAL_TITLE_RE =
+  /\b(yogurt|yoghurt|parfait|smoothie bowl|granola bowl|overnight oats|coleslaw)\b/i;
+
+const BREAKFAST_STYLE_TITLE_RE =
+  /\b(yogurt|yoghurt|parfait|smoothie bowl|overnight oats|granola|oatmeal|porridge|cereal)\b/i;
+
+export function isLightMeal(recipe: Recipe): boolean {
+  const types = recipe.dishTypes.map((t) => t.toLowerCase());
+  const title = recipe.title.en.toLowerCase();
+
+  if (types.some((t) => t === "side dish" || t.includes("salad"))) {
+    return true;
+  }
+
+  if (/\b(salad|coleslaw|slaw)\b/.test(title)) {
+    const isMain = types.some(
+      (t) => t.includes("main course") || t.includes("main dish"),
+    );
+    if (!isMain) return true;
+  }
+
+  return LIGHT_MEAL_TITLE_RE.test(recipe.title.en);
+}
+
+function isBreakfastStyle(recipe: Recipe): boolean {
+  const types = recipe.dishTypes.map((t) => t.toLowerCase());
+  if (types.some((t) => t.includes("breakfast"))) return true;
+  return BREAKFAST_STYLE_TITLE_RE.test(recipe.title.en);
+}
+
+/** Higher = more suitable as a filling lunch/dinner main. */
+export function mealHeftTier(recipe: Recipe, mealType: MealType): number {
+  const types = recipe.dishTypes.map((t) => t.toLowerCase());
+  const isMain = types.some(
+    (t) => t.includes("main course") || t.includes("main dish"),
+  );
+  const isSoup = types.some((t) => t.includes("soup"));
+  const isSalad = types.some((t) => t.includes("salad"));
+
+  if (isLightMeal(recipe)) return 0;
+  if (isMain) return 3;
+  if (isSoup) return 2;
+  if (isSalad) return mealType === "lunch" ? 1 : 0;
+  return 1;
+}
+
+export function isSweetRecipe(recipe: Recipe): boolean {
+  const types = recipe.dishTypes.map((t) => t.toLowerCase());
+
+  if (types.some((t) => t.includes("breakfast"))) return false;
+
+  if (types.some((t) => SWEET_DISH_KEYWORDS.some((k) => t.includes(k)))) {
+    return true;
+  }
+
+  if (types.some((t) => t === "snack" || t === "fingerfood")) {
+    return true;
+  }
+
+  if (types.some((t) => SAVORY_DISH_KEYWORDS.some((k) => t.includes(k)))) {
+    return false;
+  }
+
+  return DESSERT_TITLE_RE.test(recipe.title.en);
+}
+
+export function recipeMatchesMeal(recipe: Recipe, mealType: MealType): boolean {
+  if (isSweetRecipe(recipe)) {
+    return (
+      mealType === "breakfast" &&
+      recipe.dishTypes.some((t) => t.toLowerCase().includes("breakfast"))
+    );
+  }
+
+  if (mealType === "dinner") {
+    if (isLightMeal(recipe) || isBreakfastStyle(recipe)) return false;
+  }
+
+  if (mealType === "breakfast") {
+    return recipe.meals.includes("breakfast") || isBreakfastStyle(recipe);
+  }
+
+  return recipe.meals.includes(mealType);
+}
+
+function rankingPool(savoryPool: Recipe[], mealType?: MealType): Recipe[] {
+  if (mealType === "dinner") {
+    return savoryPool.filter((r) => mealHeftTier(r, "dinner") > 0);
+  }
+  return savoryPool;
+}
+
 function rankRecipes(pool: Recipe[], args: SearchRecipesArgs): Recipe[] {
   const {
     query = "",
@@ -224,8 +354,24 @@ function rankRecipes(pool: Recipe[], args: SearchRecipesArgs): Recipe[] {
     (r) => !excludeIngredients.some((bad) => matchesTerm(r, bad)),
   );
 
-  const satisfiesSoft = (r: Recipe) => {
-    if (mealType && !r.meals.includes(mealType)) return false;
+  const savoryPool =
+    mealType === "lunch" || mealType === "dinner"
+      ? candidates.filter((r) => !isSweetRecipe(r))
+      : mealType === "breakfast"
+        ? candidates.filter(
+            (r) =>
+              !isSweetRecipe(r) ||
+              r.dishTypes.some((t) => t.toLowerCase().includes("breakfast")),
+          )
+        : candidates;
+
+  const eligiblePool = rankingPool(savoryPool, mealType);
+
+  const meetsMeal = (r: Recipe) =>
+    !mealType || recipeMatchesMeal(r, mealType);
+
+  const meetsAllSoft = (r: Recipe) => {
+    if (!meetsMeal(r)) return false;
     if (typeof maxPrepTime === "number" && r.minutes > maxPrepTime) return false;
     if (nutrition.length && !nutrition.every((n) => r.nutrition.includes(n)))
       return false;
@@ -233,14 +379,18 @@ function rankRecipes(pool: Recipe[], args: SearchRecipesArgs): Recipe[] {
     return true;
   };
 
-  const strict = candidates.filter(satisfiesSoft);
-  const poolForRank = strict.length >= 3 ? strict : candidates;
+  const strict = eligiblePool.filter(meetsAllSoft);
+  const poolForRank = strict.length >= 3 ? strict : eligiblePool.filter(meetsMeal);
   const queryWords = query.toLowerCase().split(/\s+/).filter(Boolean);
 
   const score = (r: Recipe) => {
     let s = 0;
-    if (satisfiesSoft(r)) s += 10;
-    if (mealType && r.meals.includes(mealType)) s += 3;
+    if (meetsAllSoft(r)) s += 10;
+    if (mealType && recipeMatchesMeal(r, mealType)) s += 3;
+    if (mealType === "lunch" || mealType === "dinner") {
+      s += mealHeftTier(r, mealType) * 4;
+    }
+    if (r.dishTypes.some((t) => t.toLowerCase().includes("main course"))) s += 2;
     s += dietaryFilters.filter((d) => r.tags.includes(d)).length * 2;
     s += queryWords.filter((w) => matchesTerm(r, w)).length * 2;
     s += nutrition.filter((n) => r.nutrition.includes(n)).length;
@@ -251,6 +401,10 @@ function rankRecipes(pool: Recipe[], args: SearchRecipesArgs): Recipe[] {
   };
 
   const ranked = [...poolForRank].sort((a, b) => {
+    if (mealType === "lunch" || mealType === "dinner") {
+      const tierDiff = mealHeftTier(b, mealType) - mealHeftTier(a, mealType);
+      if (tierDiff !== 0) return tierDiff;
+    }
     if (availableIngredients.length > 0) {
       const missingA = countMissingIngredients(a, availableIngredients);
       const missingB = countMissingIngredients(b, availableIngredients);
@@ -265,8 +419,27 @@ function rankRecipes(pool: Recipe[], args: SearchRecipesArgs): Recipe[] {
   });
 
   const clamped = Math.min(Math.max(maxResults, 3), 5);
-  const results = ranked.slice(0, clamped);
-  return results.length > 0 ? results : candidates.slice(0, clamped);
+  const results: Recipe[] = [];
+  const seen = new Set<string>();
+
+  for (const recipe of ranked) {
+    if (results.length >= clamped) break;
+    if (!meetsMeal(recipe)) continue;
+    seen.add(recipe.id);
+    results.push(recipe);
+  }
+
+  if (results.length < clamped) {
+    const extras = [...eligiblePool]
+      .filter((r) => meetsMeal(r) && !seen.has(r.id))
+      .sort((a, b) => score(b) - score(a));
+    for (const recipe of extras) {
+      if (results.length >= clamped) break;
+      results.push(recipe);
+    }
+  }
+
+  return results.length > 0 ? results : eligiblePool.slice(0, clamped);
 }
 
 export async function getRecipeById(id: string): Promise<Recipe | undefined> {
